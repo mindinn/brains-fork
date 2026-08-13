@@ -1,6 +1,7 @@
 import { anthropic, createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createMistral } from "@ai-sdk/mistral";
 import type { ImageModel, LanguageModel } from "ai";
 import type { AIModelConfig } from "./types";
 import { resolveTextProvider, selectTextProvider } from "./provider-selection";
@@ -9,6 +10,7 @@ export interface ProviderClients {
   anthropicProvider: typeof anthropic;
   openaiProvider: ReturnType<typeof createOpenAI> | null;
   googleProvider: ReturnType<typeof createGoogleGenerativeAI> | null;
+  mistralProvider: ReturnType<typeof createMistral> | null;
 }
 
 export function createProviderClients(config: AIModelConfig): ProviderClients {
@@ -34,10 +36,15 @@ export function createProviderClients(config: AIModelConfig): ProviderClients {
         : imageApiKey
           ? createGoogleGenerativeAI({ apiKey: imageApiKey })
           : null,
+    // Mistral is text-only here — no image models, so no imageApiKey fallback.
+    mistralProvider:
+      textProvider === "mistral" && textApiKey
+        ? createMistral({ apiKey: textApiKey })
+        : null,
   };
 }
 
-const SUPPORTED_TEXT_PROVIDERS = "anthropic, google, openai";
+const SUPPORTED_TEXT_PROVIDERS = "anthropic, google, mistral, openai";
 
 export function getLanguageModel(
   clients: ProviderClients,
@@ -62,6 +69,13 @@ export function getLanguageModel(
         );
       }
       return clients.googleProvider(resolvedModel.modelId) as LanguageModel;
+    case "mistral":
+      if (!clients.mistralProvider) {
+        throw new Error(
+          `Text model "${model}" requires a Mistral API key, but none is configured`,
+        );
+      }
+      return clients.mistralProvider(resolvedModel.modelId) as LanguageModel;
     default:
       throw new Error(
         `Unsupported text provider "${resolvedModel.provider}" resolved from model "${model}". Supported providers: ${SUPPORTED_TEXT_PROVIDERS}`,

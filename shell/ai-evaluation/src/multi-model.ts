@@ -33,6 +33,7 @@ const PROVIDER_ENV_VARS: Record<string, string> = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
   google: "GOOGLE_GENERATIVE_AI_API_KEY",
+  mistral: "MISTRAL_API_KEY",
 };
 
 /**

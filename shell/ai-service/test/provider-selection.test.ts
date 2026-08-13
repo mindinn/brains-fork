@@ -37,6 +37,23 @@ describe("selectTextProvider", () => {
     expect(selectTextProvider("qwen-2.5")).toBe("ollama");
   });
 
+  it("should detect mistral from cloud-only model families", () => {
+    expect(selectTextProvider("magistral-medium-latest")).toBe("mistral");
+    expect(selectTextProvider("ministral-3b-latest")).toBe("mistral");
+    expect(selectTextProvider("codestral-latest")).toBe("mistral");
+    expect(selectTextProvider("devstral-medium-latest")).toBe("mistral");
+    expect(selectTextProvider("pixtral-large-latest")).toBe("mistral");
+    expect(selectTextProvider("open-mistral-nemo")).toBe("mistral");
+    expect(selectTextProvider("open-mixtral-8x22b")).toBe("mistral");
+  });
+
+  it("should leave ambiguous mistral names on ollama", () => {
+    // "mistral-7b" is a local Ollama tag; the cloud API needs the prefix.
+    expect(selectTextProvider("mistral-7b")).toBe("ollama");
+    expect(selectTextProvider("mistral-large-latest")).toBe("ollama");
+    expect(selectTextProvider("mistral:mistral-large-latest")).toBe("mistral");
+  });
+
   it("should handle explicit provider prefix", () => {
     expect(selectTextProvider("openai:gpt-4o-mini")).toBe("openai");
     expect(selectTextProvider("anthropic:claude-haiku-4-5")).toBe("anthropic");
@@ -60,6 +77,13 @@ describe("resolveTextProvider", () => {
     expect(resolveTextProvider("claude-haiku-4-5")).toEqual({
       provider: "anthropic",
       modelId: "claude-haiku-4-5",
+    });
+  });
+
+  it("should strip the mistral prefix from the SDK model ID", () => {
+    expect(resolveTextProvider("mistral:mistral-large-latest")).toEqual({
+      provider: "mistral",
+      modelId: "mistral-large-latest",
     });
   });
 });

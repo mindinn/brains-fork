@@ -51,6 +51,35 @@ describe("getLanguageModel", () => {
     );
   });
 
+  it("should resolve prefixed mistral models", () => {
+    const clients = createProviderClients({
+      apiKey: "test-key",
+      model: "mistral:mistral-large-latest",
+    });
+    expect(
+      modelIdOf(getLanguageModel(clients, "mistral:mistral-large-latest")),
+    ).toBe("mistral-large-latest");
+  });
+
+  it("should resolve auto-detected mistral cloud families", () => {
+    const clients = createProviderClients({
+      apiKey: "test-key",
+      model: "ministral-3b-latest",
+    });
+    expect(modelIdOf(getLanguageModel(clients, "ministral-3b-latest"))).toBe(
+      "ministral-3b-latest",
+    );
+  });
+
+  it("should throw when a mistral model has no API key configured", () => {
+    const clients = createProviderClients({
+      model: "mistral:mistral-large-latest",
+    });
+    expect(() =>
+      getLanguageModel(clients, "mistral:mistral-large-latest"),
+    ).toThrow(/requires a Mistral API key/);
+  });
+
   it("should throw instead of silently routing unknown providers to anthropic", () => {
     const clients = createProviderClients({
       apiKey: "test-key",

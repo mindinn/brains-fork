@@ -21,12 +21,22 @@ describe("resolveAIConfig", () => {
     expect(config.aiApiKey).toBe("sk-test");
   });
 
-  it("should strip explicit provider prefix from model", () => {
+  it("should preserve an explicit provider prefix on the model", () => {
     const config = resolveAIConfig(
       { AI_API_KEY: "sk-test" },
       { model: "openai:gpt-4o-mini" },
     );
-    expect(config.aiModel).toBe("gpt-4o-mini");
+    expect(config.aiModel).toBe("openai:gpt-4o-mini");
+  });
+
+  it("should preserve a prefix that overrides name-based detection", () => {
+    // "mistral-large-latest" auto-detects as ollama; the prefix is the only
+    // way to reach the Mistral cloud API, so it must survive this layer.
+    const config = resolveAIConfig(
+      { AI_API_KEY: "sk-test" },
+      { model: "mistral:mistral-large-latest" },
+    );
+    expect(config.aiModel).toBe("mistral:mistral-large-latest");
   });
 
   it("should not set model when no model specified", () => {

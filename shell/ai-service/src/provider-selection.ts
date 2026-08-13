@@ -10,12 +10,25 @@ export interface ResolvedModelProvider {
 
 /**
  * Model name patterns → provider auto-detection.
+ *
+ * Mistral's naming overlaps with Ollama's: "mistral-7b" is a local Ollama tag
+ * while "mistral-large-latest" is the Mistral cloud API. Only the families
+ * that cannot collide with a local tag auto-detect as "mistral"; bare
+ * "mistral-*" names stay on "ollama", so use the explicit "mistral:" prefix
+ * to reach the cloud API for those.
  */
 const MODEL_PATTERNS: Array<[RegExp, string]> = [
   [/^claude/, "anthropic"],
   [/^gpt-/, "openai"],
   [/^o[13]-/, "openai"],
   [/^gemini/, "google"],
+  [/^magistral/, "mistral"],
+  [/^ministral/, "mistral"],
+  [/^codestral/, "mistral"],
+  [/^devstral/, "mistral"],
+  [/^pixtral/, "mistral"],
+  [/^open-mistral-/, "mistral"],
+  [/^open-mixtral-/, "mistral"],
   [/^llama/, "ollama"],
   [/^mistral/, "ollama"],
   [/^phi-/, "ollama"],

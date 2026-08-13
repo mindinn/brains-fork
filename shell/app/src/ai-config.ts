@@ -5,7 +5,8 @@
  *   AI_API_KEY   — primary key for text generation (and images if no override)
  *   AI_IMAGE_KEY — optional override for image generation (different provider)
  *
- * The model field determines the provider (resolved by AI service at runtime).
+ * The model field determines the provider (resolved by AI service at runtime),
+ * either by name or via an explicit "provider:model" prefix.
  */
 
 import type { ReasoningEffort } from "./types";
@@ -35,11 +36,10 @@ export function resolveAIConfig(
   }
 
   if (overrides?.model) {
-    // Strip explicit provider prefix ("openai:gpt-4o-mini" → "gpt-4o-mini")
-    // Provider is auto-detected by the AI service from the model name.
-    const colonIdx = overrides.model.indexOf(":");
-    result.aiModel =
-      colonIdx > 0 ? overrides.model.slice(colonIdx + 1) : overrides.model;
+    // Passed through verbatim: the AI service resolves the provider, and an
+    // explicit "provider:model" prefix is how a caller overrides the
+    // name-based auto-detection. Stripping it here would discard that choice.
+    result.aiModel = overrides.model;
   }
   if (overrides?.reasoningEffort) {
     result.aiReasoningEffort = overrides.reasoningEffort;
