@@ -37,21 +37,36 @@ export function createProviderClients(config: AIModelConfig): ProviderClients {
   };
 }
 
+const SUPPORTED_TEXT_PROVIDERS = "anthropic, google, openai";
+
 export function getLanguageModel(
   clients: ProviderClients,
   model: string,
 ): LanguageModel {
   const resolvedModel = resolveTextProvider(model);
 
-  if (resolvedModel.provider === "openai" && clients.openaiProvider) {
-    return clients.openaiProvider(resolvedModel.modelId) as LanguageModel;
+  switch (resolvedModel.provider) {
+    case "anthropic":
+      return clients.anthropicProvider(resolvedModel.modelId);
+    case "openai":
+      if (!clients.openaiProvider) {
+        throw new Error(
+          `Text model "${model}" requires an OpenAI API key, but none is configured`,
+        );
+      }
+      return clients.openaiProvider(resolvedModel.modelId) as LanguageModel;
+    case "google":
+      if (!clients.googleProvider) {
+        throw new Error(
+          `Text model "${model}" requires a Google API key, but none is configured`,
+        );
+      }
+      return clients.googleProvider(resolvedModel.modelId) as LanguageModel;
+    default:
+      throw new Error(
+        `Unsupported text provider "${resolvedModel.provider}" resolved from model "${model}". Supported providers: ${SUPPORTED_TEXT_PROVIDERS}`,
+      );
   }
-
-  if (resolvedModel.provider === "google" && clients.googleProvider) {
-    return clients.googleProvider(resolvedModel.modelId) as LanguageModel;
-  }
-
-  return clients.anthropicProvider(resolvedModel.modelId);
 }
 
 export function canGenerateImages(clients: ProviderClients): boolean {

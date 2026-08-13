@@ -334,7 +334,7 @@ describe("AIService", () => {
 
     it("should omit temperature for OpenAI reasoning models", async () => {
       const service = AIService.createFresh(
-        { model: "gpt-5.4-mini", temperature: 0.3 },
+        { apiKey: "test-key", model: "gpt-5.4-mini", temperature: 0.3 },
         logger,
       );
 
@@ -350,7 +350,7 @@ describe("AIService", () => {
 
     it("should pass configured reasoning effort to OpenAI", async () => {
       const service = AIService.createFresh(
-        { model: "gpt-5.6-luna", reasoningEffort: "low" },
+        { apiKey: "test-key", model: "gpt-5.6-luna", reasoningEffort: "low" },
         logger,
       );
 
@@ -502,6 +502,7 @@ describe("AIService", () => {
     it("should omit temperature for reasoning models during object generation", async () => {
       const service = AIService.createFresh(
         {
+          apiKey: "test-key",
           model: "gpt-5.4-mini",
           temperature: 0.2,
         },
@@ -520,7 +521,7 @@ describe("AIService", () => {
 
     it("should preserve OpenAI reasoning options for object generation", async () => {
       const service = AIService.createFresh(
-        { model: "gpt-5.6-luna", reasoningEffort: "low" },
+        { apiKey: "test-key", model: "gpt-5.6-luna", reasoningEffort: "low" },
         logger,
       );
 
