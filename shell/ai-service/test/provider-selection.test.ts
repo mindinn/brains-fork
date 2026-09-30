@@ -76,6 +76,19 @@ describe("supportsTemperature", () => {
     expect(supportsTemperature("openai:gpt-5.4-mini")).toBe(false);
     expect(supportsTemperature("o3-mini")).toBe(false);
   });
+
+  it("should disable temperature for GPT-6 and later generations", () => {
+    expect(supportsTemperature("gpt-6-luna")).toBe(false);
+    expect(supportsTemperature("gpt-6-sol")).toBe(false);
+    expect(supportsTemperature("gpt-6.1-sol")).toBe(false);
+    expect(supportsTemperature("openai:gpt-6-luna")).toBe(false);
+    expect(supportsTemperature("gpt-10-luna")).toBe(false);
+  });
+
+  it("should keep temperature for GPT-4 generation models", () => {
+    expect(supportsTemperature("gpt-4.1")).toBe(true);
+    expect(supportsTemperature("gpt-4o-search-preview")).toBe(true);
+  });
 });
 
 describe("selectImageProvider", () => {

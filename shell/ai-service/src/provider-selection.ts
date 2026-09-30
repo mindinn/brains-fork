@@ -99,7 +99,12 @@ export function selectImageProvider(model?: string): ResolvedModelProvider {
   return { provider: "openai", modelId: model };
 }
 
-const NO_TEMPERATURE_PATTERN = /^(gpt-5|o[1-9])(?:[.-]|$)/;
+/**
+ * OpenAI reasoning models: every GPT generation from 5 onward (gpt-5*, gpt-6*,
+ * and later) plus the o-series. Matches the major version only, so a new
+ * generation such as gpt-7 is covered without a code change.
+ */
+const NO_TEMPERATURE_PATTERN = /^(gpt-(?:[5-9]|[1-9]\d+)|o[1-9])(?:[.-]|$)/;
 
 function resolvedSupportsTemperature(resolved: ResolvedModelProvider): boolean {
   if (resolved.provider !== "openai") return true;
@@ -109,8 +114,8 @@ function resolvedSupportsTemperature(resolved: ResolvedModelProvider): boolean {
 /**
  * Some providers/models reject temperature entirely.
  *
- * OpenAI reasoning models (gpt-5*, o*) currently warn or fail when
- * temperature is passed, so callers should omit it.
+ * OpenAI reasoning models (gpt-5 and later generations, o*) reject
+ * temperature while reasoning is enabled, so callers should omit it.
  */
 export function supportsTemperature(model?: string): boolean {
   if (!model) return true;
