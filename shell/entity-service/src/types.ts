@@ -615,6 +615,11 @@ export interface EntityTypeConfig {
   /** Whether to index serialized content in full-text search (default: true).
    *  Set to false for binary entity types. Mutations remove stale FTS rows. */
   fullTextSearchable?: boolean;
+  /** Whether a search that names no entity types includes this type (default: true).
+   *  Set to false for entities derived from the brain's own answers, so they are
+   *  not retrieved as sources; a search naming the type still finds them, and
+   *  raw-distance search is unaffected. */
+  includeInBroadSearch?: boolean;
   /** Binary storage policy. Absence means text content. */
   binaryStorage?: "data-url" | "asset";
   /** Default system_list order, applied by the entity service before pagination. */
@@ -733,11 +738,29 @@ export interface UpdateEntityRequest<T extends BaseEntity> {
   options?: UpdateEntityOptions | undefined;
 }
 
+/** Native-only atomic same-type, same-visibility update and removal.
+ * Both revisions must come from admitted write snapshots. The source is
+ * removed only when the destination and both journals commit with it.
+ */
+export interface FoldEntityRequest<T extends BaseEntity = BaseEntity> {
+  source: { entityType: string; id: string; expectedRevision: string };
+  targetRevision: string;
+  entity: T;
+  options?: Omit<
+    UpdateEntityOptions,
+    "conditionalWrite" | "expectedContentHash"
+  >;
+}
+
 export interface DeleteEntityRequest {
   entityType: string;
   id: string;
   options?:
-    Pick<EntityJobOptions, "eventContext" | "persistenceOrigin"> | undefined;
+    | (Pick<EntityJobOptions, "eventContext" | "persistenceOrigin"> & {
+        /** Delete only while the stored entity still has this content hash; false otherwise. */
+        expectedContentHash?: string | undefined;
+      })
+    | undefined;
 }
 
 export interface UpsertEntityRequest<T extends BaseEntity> {
@@ -757,6 +780,10 @@ export interface EntitySearchRequest {
 
 export interface SearchWithDistancesRequest {
   query: string;
+  /** Only these entity types; empty or omitted includes all types. */
+  types?: string[] | undefined;
+  /** Only results at most this cosine distance from the query. */
+  maxDistance?: number | undefined;
 }
 
 export interface SemanticEntityReference {
@@ -1158,6 +1185,7 @@ export interface EntityServiceClient extends ICoreEntityService {
     request: UpdateEntityRequest<T>,
   ): Promise<EntityMutationResult>;
   deleteEntity(request: DeleteEntityRequest): Promise<boolean>;
+  foldEntity(request: FoldEntityRequest): Promise<EntityMutationResult>;
   upsertEntity<T extends BaseEntity>(
     request: UpsertEntityRequest<T>,
   ): Promise<EntityMutationResult & { created: boolean }>;
