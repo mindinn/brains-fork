@@ -17,7 +17,7 @@ export interface ResolvedProvider {
 const MODEL_PATTERNS: Array<[RegExp, string]> = [
   [/^claude/, "anthropic"],
   [/^gpt-/, "openai"],
-  [/^o[13]-/, "openai"],
+  [/^o\d+(?:-|$)/, "openai"],
   [/^gemini/, "google"],
   [/^llama/, "ollama"],
   [/^mistral/, "ollama"],

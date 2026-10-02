@@ -40,7 +40,10 @@ export type {
 export { AgentService } from "./agent-service";
 export { buildAssistantActor, createBrainAgentId } from "./assistant-actor";
 export { createBrainAgentFactory } from "./brain-agent";
-export { priceOpenAiGuestTurn } from "./openai-guest-pricing";
+export {
+  openAiGuestPricing,
+  priceOpenAiGuestTurn,
+} from "./openai-guest-pricing";
 export type { GuestPricing } from "./openai-guest-pricing";
 export { aiServiceEnvSchema } from "./env-schema";
 export {

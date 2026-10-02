@@ -3,6 +3,8 @@
  *
  * Pure functions — no SDK imports, no side effects.
  */
+import type { ReasoningEffort } from "./types";
+
 export interface ResolvedModelProvider {
   provider: string;
   modelId: string;
@@ -14,7 +16,7 @@ export interface ResolvedModelProvider {
 const MODEL_PATTERNS: Array<[RegExp, string]> = [
   [/^claude/, "anthropic"],
   [/^gpt-/, "openai"],
-  [/^o[13]-/, "openai"],
+  [/^o\d+(?:-|$)/, "openai"],
   [/^gemini/, "google"],
   [/^llama/, "ollama"],
   [/^mistral/, "ollama"],
@@ -100,31 +102,105 @@ export function selectImageProvider(model?: string): ResolvedModelProvider {
 }
 
 /**
- * OpenAI reasoning models: every GPT generation from 5 onward (gpt-5*, gpt-6*,
- * and later) plus the o-series. Matches the major version only, so a new
- * generation such as gpt-7 is covered without a code change.
+ * OpenAI model capabilities, kept in line with
+ * `getOpenAILanguageModelCapabilities` in @ai-sdk/openai so this layer never
+ * disagrees with what the SDK sends.
  */
-const NO_TEMPERATURE_PATTERN = /^(gpt-(?:[5-9]|[1-9]\d+)|o[1-9])(?:[.-]|$)/;
+function parseGptVersion(modelId: string): {
+  major: number;
+  minor: number | undefined;
+  variant: string | undefined;
+} | null {
+  const match = /^gpt-(\d+)(?:\.(\d+))?(?:-(.+))?$/.exec(modelId);
+  if (!match) return null;
+  return {
+    major: Number(match[1]),
+    minor: match[2] === undefined ? undefined : Number(match[2]),
+    variant: match[3],
+  };
+}
 
-function resolvedSupportsTemperature(resolved: ResolvedModelProvider): boolean {
-  if (resolved.provider !== "openai") return true;
-  return !NO_TEMPERATURE_PATTERN.test(resolved.modelId);
+const O_SERIES_PATTERN = /^o\d+(?:-|$)/;
+const SEARCH_PREVIEW_PATTERN = /^gpt-4o(?:-mini)?-search-preview/;
+
+const GPT6_EFFORTS: readonly ReasoningEffort[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+const GPT6_SOL_LUNA_EFFORTS: readonly ReasoningEffort[] = [
+  "none",
+  ...GPT6_EFFORTS,
+];
+
+interface OpenAICapabilities {
+  supportsTemperature: boolean;
+  /** Undefined when the SDK sends any effort as configured. */
+  supportedReasoningEfforts: readonly ReasoningEffort[] | undefined;
+}
+
+function openAICapabilities(
+  modelId: string,
+  reasoningEffort: ReasoningEffort | undefined,
+): OpenAICapabilities {
+  if (SEARCH_PREVIEW_PATTERN.test(modelId)) {
+    return { supportsTemperature: false, supportedReasoningEfforts: undefined };
+  }
+  if (O_SERIES_PATTERN.test(modelId)) {
+    return { supportsTemperature: false, supportedReasoningEfforts: undefined };
+  }
+  const gpt = parseGptVersion(modelId);
+  if (!gpt || gpt.major < 5) {
+    return { supportsTemperature: true, supportedReasoningEfforts: undefined };
+  }
+  // gpt-5-chat-latest and similar are chat models, not reasoning models.
+  const isChat = gpt.minor === undefined && gpt.variant?.startsWith("chat");
+  if (isChat) {
+    return { supportsTemperature: true, supportedReasoningEfforts: undefined };
+  }
+  if (gpt.major >= 6) {
+    const solOrLuna = modelId === "gpt-6-sol" || modelId === "gpt-6-luna";
+    return {
+      supportsTemperature: false,
+      supportedReasoningEfforts: solOrLuna
+        ? GPT6_SOL_LUNA_EFFORTS
+        : GPT6_EFFORTS,
+    };
+  }
+  // gpt-5.1 and later accept temperature when reasoning is turned off.
+  const acceptsNonReasoningParameters = (gpt.minor ?? 0) >= 1;
+  return {
+    supportsTemperature:
+      reasoningEffort === "none" && acceptsNonReasoningParameters,
+    supportedReasoningEfforts: undefined,
+  };
 }
 
 /**
  * Some providers/models reject temperature entirely.
  *
- * OpenAI reasoning models (gpt-5 and later generations, o*) reject
- * temperature while reasoning is enabled, so callers should omit it.
+ * OpenAI reasoning models (gpt-5 and later, the o-series) and search preview
+ * models reject temperature, so callers should omit it. gpt-5.1 to gpt-5.x
+ * accept it when `reasoningEffort` is "none".
  */
-export function supportsTemperature(model?: string): boolean {
-  if (!model) return true;
-  return resolvedSupportsTemperature(resolveTextProvider(model));
+export function supportsTemperature(
+  model?: string,
+  reasoningEffort?: ReasoningEffort,
+): boolean {
+  return resolveTextModelCapabilities(model, reasoningEffort)
+    .supportsTemperature;
 }
 
 export interface TextModelCapabilities {
   provider: string;
   supportsTemperature: boolean;
+  /**
+   * The reasoning efforts the model accepts; the SDK drops any other effort
+   * with only a warning. Undefined when the model has no such limit.
+   */
+  supportedReasoningEfforts: readonly ReasoningEffort[] | undefined;
 }
 
 /**
@@ -132,13 +208,43 @@ export interface TextModelCapabilities {
  */
 export function resolveTextModelCapabilities(
   model?: string,
+  reasoningEffort?: ReasoningEffort,
 ): TextModelCapabilities {
   if (!model) {
-    return { provider: "anthropic", supportsTemperature: true };
+    return {
+      provider: "anthropic",
+      supportsTemperature: true,
+      supportedReasoningEfforts: undefined,
+    };
   }
   const resolved = resolveTextProvider(model);
+  if (resolved.provider !== "openai") {
+    return {
+      provider: resolved.provider,
+      supportsTemperature: true,
+      supportedReasoningEfforts: undefined,
+    };
+  }
   return {
     provider: resolved.provider,
-    supportsTemperature: resolvedSupportsTemperature(resolved),
+    ...openAICapabilities(resolved.modelId, reasoningEffort),
   };
+}
+
+/**
+ * Explains why a configured reasoning effort will not reach the model, or
+ * returns undefined when it will.
+ */
+export function unsupportedReasoningEffort(
+  model: string | undefined,
+  reasoningEffort: ReasoningEffort | undefined,
+): string | undefined {
+  if (!reasoningEffort) return undefined;
+  const { provider, supportedReasoningEfforts } = resolveTextModelCapabilities(
+    model,
+    reasoningEffort,
+  );
+  if (provider !== "openai" || !supportedReasoningEfforts) return undefined;
+  if (supportedReasoningEfforts.includes(reasoningEffort)) return undefined;
+  return `${model} does not support reasoningEffort "${reasoningEffort}"; supported: ${supportedReasoningEfforts.join(", ")}. The provider will use its default effort.`;
 }

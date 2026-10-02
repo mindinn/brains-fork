@@ -4,6 +4,7 @@ import {
   selectTextProvider,
   selectImageProvider,
   supportsTemperature,
+  unsupportedReasoningEffort,
 } from "../src/provider-selection";
 
 describe("selectTextProvider", () => {
@@ -24,6 +25,9 @@ describe("selectTextProvider", () => {
   it("should detect openai from o-series model", () => {
     expect(selectTextProvider("o1-preview")).toBe("openai");
     expect(selectTextProvider("o3-mini")).toBe("openai");
+    expect(selectTextProvider("o4-mini")).toBe("openai");
+    expect(selectTextProvider("o3")).toBe("openai");
+    expect(selectTextProvider("o1")).toBe("openai");
   });
 
   it("should detect google from gemini model", () => {
@@ -87,7 +91,50 @@ describe("supportsTemperature", () => {
 
   it("should keep temperature for GPT-4 generation models", () => {
     expect(supportsTemperature("gpt-4.1")).toBe(true);
-    expect(supportsTemperature("gpt-4o-search-preview")).toBe(true);
+  });
+
+  it("should disable temperature for search preview models", () => {
+    expect(supportsTemperature("gpt-4o-search-preview")).toBe(false);
+    expect(supportsTemperature("gpt-4o-mini-search-preview")).toBe(false);
+  });
+
+  it("should keep temperature for GPT chat models", () => {
+    expect(supportsTemperature("gpt-5-chat-latest")).toBe(true);
+    expect(supportsTemperature("gpt-6-chat-latest")).toBe(true);
+  });
+
+  it("should disable temperature for every o-series generation", () => {
+    expect(supportsTemperature("o4-mini")).toBe(false);
+    expect(supportsTemperature("o3")).toBe(false);
+    expect(supportsTemperature("openai:o10-mini")).toBe(false);
+  });
+
+  it("should keep temperature for gpt-5.1+ when reasoning is off", () => {
+    expect(supportsTemperature("gpt-5.6-luna", "none")).toBe(true);
+    expect(supportsTemperature("gpt-5.6-luna", "low")).toBe(false);
+    expect(supportsTemperature("gpt-5-mini", "none")).toBe(false);
+    expect(supportsTemperature("gpt-6-luna", "none")).toBe(false);
+  });
+});
+
+describe("unsupportedReasoningEffort", () => {
+  it("should flag efforts a GPT-6 model does not accept", () => {
+    expect(unsupportedReasoningEffort("gpt-6-astra", "none")).toContain(
+      'does not support reasoningEffort "none"',
+    );
+    expect(unsupportedReasoningEffort("gpt-6.1-sol", "none")).toBeDefined();
+  });
+
+  it("should accept supported efforts and other models", () => {
+    expect(unsupportedReasoningEffort("gpt-6-luna", "none")).toBeUndefined();
+    expect(unsupportedReasoningEffort("gpt-6-astra", "low")).toBeUndefined();
+    expect(unsupportedReasoningEffort("gpt-5.6-luna", "none")).toBeUndefined();
+    expect(
+      unsupportedReasoningEffort("claude-sonnet-4-6", "none"),
+    ).toBeUndefined();
+    expect(
+      unsupportedReasoningEffort("gpt-6-astra", undefined),
+    ).toBeUndefined();
   });
 });
 

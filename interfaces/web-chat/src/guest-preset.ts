@@ -67,7 +67,8 @@ export function createDefaultGuestPolicy(
       maxStoredBytes: 4_000_000,
     },
     disclosure: {
-      provider: "OpenAI (gpt-5.6-luna)",
+      // No model name: the configured OpenAI model can change without this preset.
+      provider: "OpenAI",
       notice:
         (origin.startsWith("http://") ? "Local test only. " : "") +
         "Messages and retrieved public text reach this Brain and OpenAI. Do not send sensitive information. AI answers can be wrong. Conversations are not added to public knowledge. This session expires after one hour without renewal.",

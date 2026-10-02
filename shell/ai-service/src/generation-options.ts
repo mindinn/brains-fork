@@ -1,7 +1,6 @@
 import type { AIModelConfig, ReasoningEffort } from "./types";
 
 const DEFAULT_TEMPERATURE = 0.7;
-const DEFAULT_MAX_TOKENS = 1000;
 
 export interface TokenUsage {
   promptTokens: number;
@@ -17,7 +16,7 @@ interface SDKUsage {
 
 interface TextGenerationOptions {
   temperature?: number;
-  maxTokens?: number;
+  maxOutputTokens?: number;
   webSearch?: true;
   providerOptions?: {
     openai: { reasoningEffort: ReasoningEffort };
@@ -28,7 +27,6 @@ export function withAIModelDefaults(config: AIModelConfig): AIModelConfig {
   return {
     ...config,
     temperature: config.temperature ?? DEFAULT_TEMPERATURE,
-    maxTokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
     webSearch: config.webSearch ?? true,
   };
 }
@@ -45,7 +43,7 @@ export function getTextGenerationOptions(
   }
 
   if (config.maxTokens !== undefined) {
-    options.maxTokens = config.maxTokens;
+    options.maxOutputTokens = config.maxTokens;
   }
 
   if (config.webSearch) {

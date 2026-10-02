@@ -19,6 +19,24 @@ export interface GuestProviderUsage {
 /** Prices a guest turn's reported usage; absent when the model is unpriced. */
 export type GuestPricing = (usage: GuestProviderUsage) => GuestTurnCost;
 
+/** Nano-dollars per token, so every published rate is an integer. */
+interface TierRates {
+  input: number;
+  /** Undefined when the provider does not publish this rate. */
+  cacheRead: number | undefined;
+  cacheWrite: number;
+  output: number;
+}
+
+interface ModelRates {
+  revision: string;
+  standard: TierRates;
+  /** Applies to the whole request above LONG_CONTEXT_THRESHOLD input tokens. */
+  long: TierRates;
+}
+
+const LONG_CONTEXT_THRESHOLD = 272_000;
+
 /**
  * Published gpt-5.6-luna rates, read on 2026-09-26
  * from https://developers.openai.com/api/docs/models/gpt-5.6-luna: per 1M
@@ -29,16 +47,41 @@ export type GuestPricing = (usage: GuestProviderUsage) => GuestTurnCost;
  */
 export const openAiGuestPricingRevision = "openai-gpt-5.6-luna-2026-09-26";
 
-const LONG_CONTEXT_THRESHOLD = 272_000;
-/** Hundredths of a micro-dollar per token, so every published rate is an integer. */
-const rates = {
-  standard: { input: 20, cacheRead: 2, cacheWrite: 25, output: 120 },
-  long: { input: 40, cacheRead: undefined, cacheWrite: 50, output: 180 },
-} as const;
+/**
+ * Published GPT-6 rates, read on 2026-10-01 from
+ * https://developers.openai.com/api/docs/models/gpt-6-luna and
+ * https://developers.openai.com/api/docs/models/gpt-6-sol: per 1M tokens,
+ * gpt-6-luna input $0.10, cached input $0.01, cache writes $0.125, output
+ * $0.50; gpt-6-sol input $2, cached input $0.20, cache writes $2.50, output
+ * $10. Above 272K input tokens, 2× input and cache rates and 1.5× output for
+ * the whole request. Output includes reasoning.
+ */
+const gpt56LunaRates: ModelRates = {
+  revision: openAiGuestPricingRevision,
+  standard: { input: 200, cacheRead: 20, cacheWrite: 250, output: 1200 },
+  long: { input: 400, cacheRead: undefined, cacheWrite: 500, output: 1800 },
+};
 
-type Priced = { centi: number } | Extract<GuestTurnCost, { state: "unknown" }>;
+const modelRates: Readonly<Record<string, ModelRates>> = {
+  "gpt-5.6-luna": gpt56LunaRates,
+  "gpt-6-luna": {
+    revision: "openai-gpt-6-luna-2026-10-01",
+    standard: { input: 100, cacheRead: 10, cacheWrite: 125, output: 500 },
+    long: { input: 200, cacheRead: 20, cacheWrite: 250, output: 750 },
+  },
+  "gpt-6-sol": {
+    revision: "openai-gpt-6-sol-2026-10-01",
+    standard: { input: 2000, cacheRead: 200, cacheWrite: 2500, output: 10000 },
+    long: { input: 4000, cacheRead: 400, cacheWrite: 5000, output: 15000 },
+  },
+};
 
-function priceCall(call: GuestProviderUsage["calls"][number]): Priced {
+type Priced = { nano: number } | Extract<GuestTurnCost, { state: "unknown" }>;
+
+function priceCall(
+  rates: ModelRates,
+  call: GuestProviderUsage["calls"][number],
+): Priced {
   if (call.cacheRead === undefined)
     return { state: "unknown", reason: "missing-usage" };
   // The guest wire policy sends no cache writes; the provider reports none.
@@ -50,7 +93,7 @@ function priceCall(call: GuestProviderUsage["calls"][number]): Priced {
   if (call.cacheRead > 0 && tier.cacheRead === undefined)
     return { state: "unknown", reason: "unsupported-pricing" };
   return {
-    centi:
+    nano:
       uncached * tier.input +
       call.cacheRead * (tier.cacheRead ?? 0) +
       cacheWrite * tier.cacheWrite +
@@ -58,22 +101,41 @@ function priceCall(call: GuestProviderUsage["calls"][number]): Priced {
   };
 }
 
-/** A guest turn's cost from the provider's reported usage; never a quote. */
-export function priceOpenAiGuestTurn(usage: GuestProviderUsage): GuestTurnCost {
-  const parts: Priced[] = usage.calls.map(priceCall);
+function priceTurn(
+  rates: ModelRates,
+  usage: GuestProviderUsage,
+): GuestTurnCost {
+  const parts: Priced[] = usage.calls.map((call) => priceCall(rates, call));
   const unknown = parts.find(
     (part): part is Extract<Priced, { state: "unknown" }> => "state" in part,
   );
   if (unknown) return unknown;
-  const centi = parts.reduce(
-    (sum, part) => sum + ("centi" in part ? part.centi : 0),
+  const nano = parts.reduce(
+    (sum, part) => sum + ("nano" in part ? part.nano : 0),
     0,
   );
   return {
     state: "known",
-    microUsd: Math.ceil(centi / 100),
-    pricing: openAiGuestPricingRevision,
+    microUsd: Math.ceil(nano / 1000),
+    pricing: rates.revision,
   };
+}
+
+/** A gpt-5.6-luna guest turn's cost from the provider's reported usage; never a quote. */
+export function priceOpenAiGuestTurn(usage: GuestProviderUsage): GuestTurnCost {
+  return priceTurn(gpt56LunaRates, usage);
+}
+
+/**
+ * Guest pricing for a configured text model, or undefined when its published
+ * rates are not known. Accepts the "openai:" prefix.
+ */
+export function openAiGuestPricing(
+  model: string | undefined,
+): GuestPricing | undefined {
+  if (!model) return undefined;
+  const rates = modelRates[model.replace(/^openai:/, "")];
+  return rates ? (usage): GuestTurnCost => priceTurn(rates, usage) : undefined;
 }
 
 /**

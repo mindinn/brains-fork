@@ -30,7 +30,7 @@ describe("guest configuration conventions", () => {
         messageCharacters: 4000,
         requestTimeoutSeconds: 180,
       },
-      disclosure: { provider: "OpenAI (gpt-5.6-luna)" },
+      disclosure: { provider: "OpenAI" },
     });
   });
 

@@ -116,7 +116,7 @@ export function createBrainAgentFactory(
     reasoningEffort,
     messageBus,
   } = options;
-  const capabilities = resolveTextModelCapabilities(modelId);
+  const capabilities = resolveTextModelCapabilities(modelId, reasoningEffort);
 
   // Create event emitter backed by message bus
   const emitter = createMessageBusEmitter(messageBus);
@@ -198,7 +198,7 @@ export function createBrainAgentFactory(
           // Provider options
           ...(temperature !== undefined &&
             capabilities.supportsTemperature && { temperature }),
-          ...(maxTokens !== undefined && { maxTokens }),
+          ...(maxTokens !== undefined && { maxOutputTokens: maxTokens }),
           // Guests answer from the brain, never from provider web search.
           ...((capabilities.provider === "openai" &&
           reasoningEffort !== undefined

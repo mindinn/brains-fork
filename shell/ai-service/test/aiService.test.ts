@@ -130,7 +130,7 @@ describe("AIService", () => {
 
       expect(config.model).toBeUndefined();
       expect(config.temperature).toBe(0.7);
-      expect(config.maxTokens).toBe(1000);
+      expect(config.maxTokens).toBeUndefined();
     });
 
     it("should accept custom configuration", () => {
@@ -151,7 +151,7 @@ describe("AIService", () => {
 
     it("should update configuration", () => {
       const service = AIService.createFresh(
-        { model: DEFAULT_TEXT_MODEL },
+        { model: DEFAULT_TEXT_MODEL, maxTokens: 1000 },
         logger,
       );
 
@@ -210,7 +210,6 @@ describe("AIService", () => {
         system: systemPrompt,
         prompt: userPrompt,
         temperature: 0.7,
-        maxTokens: 1000,
         webSearch: true,
       });
     });
@@ -315,12 +314,12 @@ describe("AIService", () => {
       expect(ai.generateText).toHaveBeenCalledWith(
         expect.objectContaining({
           temperature: 0.3,
-          maxTokens: 500,
+          maxOutputTokens: 500,
         }),
       );
     });
 
-    it("should use defaults when temperature and maxTokens are not specified", async () => {
+    it("should use the default temperature and no output limit when not specified", async () => {
       const service = AIService.createFresh(
         { model: DEFAULT_TEXT_MODEL },
         logger,
@@ -331,8 +330,10 @@ describe("AIService", () => {
       expect(generateTextSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           temperature: 0.7,
-          maxTokens: 1000,
         }),
+      );
+      expect(generateTextSpy).toHaveBeenCalledWith(
+        expect.not.objectContaining({ maxOutputTokens: expect.anything() }),
       );
     });
 
@@ -352,7 +353,7 @@ describe("AIService", () => {
 
     it("should omit temperature for OpenAI reasoning models", async () => {
       const service = AIService.createFresh(
-        { model: "gpt-5.4-mini", temperature: 0.3 },
+        { model: "gpt-5.4-mini", temperature: 0.3, maxTokens: 1000 },
         logger,
       );
 
@@ -362,7 +363,47 @@ describe("AIService", () => {
         expect.not.objectContaining({ temperature: expect.anything() }),
       );
       expect(generateTextSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ maxTokens: 1000 }),
+        expect.objectContaining({ maxOutputTokens: 1000 }),
+      );
+    });
+
+    it("should omit temperature for GPT-6 models", async () => {
+      const service = AIService.createFresh(
+        { model: "gpt-6-luna", temperature: 0.3, reasoningEffort: "none" },
+        logger,
+      );
+
+      await service.generateText("System", "User");
+
+      expect(generateTextSpy).toHaveBeenCalledWith(
+        expect.not.objectContaining({ temperature: expect.anything() }),
+      );
+    });
+
+    it("should keep temperature for gpt-5.1+ when reasoning is off", async () => {
+      const service = AIService.createFresh(
+        { model: "gpt-5.6-luna", temperature: 0.2, reasoningEffort: "none" },
+        logger,
+      );
+
+      await service.generateText("System", "User");
+
+      expect(generateTextSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ temperature: 0.2 }),
+      );
+    });
+
+    it("should apply temperature rules again after a config update", async () => {
+      const service = AIService.createFresh(
+        { model: DEFAULT_TEXT_MODEL, temperature: 0.3 },
+        logger,
+      );
+      service.updateConfig({ model: "gpt-6-sol" });
+
+      await service.generateText("System", "User");
+
+      expect(generateTextSpy).toHaveBeenCalledWith(
+        expect.not.objectContaining({ temperature: expect.anything() }),
       );
     });
 
@@ -497,7 +538,6 @@ describe("AIService", () => {
         prompt: userPrompt,
         schema: testSchema,
         temperature: 0.7,
-        maxTokens: 1000,
         webSearch: true,
         providerOptions: {
           anthropic: { structuredOutputMode: "jsonTool" },
@@ -591,7 +631,7 @@ describe("AIService", () => {
       expect(ai.generateObject).toHaveBeenCalledWith(
         expect.objectContaining({
           temperature: 0.2,
-          maxTokens: 1500,
+          maxOutputTokens: 1500,
         }),
       );
     });
@@ -601,6 +641,7 @@ describe("AIService", () => {
         {
           model: "gpt-5.4-mini",
           temperature: 0.2,
+          maxTokens: 1000,
         },
         logger,
       );
@@ -611,7 +652,20 @@ describe("AIService", () => {
         expect.not.objectContaining({ temperature: expect.anything() }),
       );
       expect(generateObjectSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ maxTokens: 1000 }),
+        expect.objectContaining({ maxOutputTokens: 1000 }),
+      );
+    });
+
+    it("should omit temperature for GPT-6 models during object generation", async () => {
+      const service = AIService.createFresh(
+        { model: "gpt-6-luna", temperature: 0.2 },
+        logger,
+      );
+
+      await service.generateObject("System", "User", testSchema);
+
+      expect(generateObjectSpy).toHaveBeenCalledWith(
+        expect.not.objectContaining({ temperature: expect.anything() }),
       );
     });
 
