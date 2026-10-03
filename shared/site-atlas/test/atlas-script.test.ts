@@ -40,7 +40,9 @@ function setup(options: {
           <li data-atlas-mark data-atlas-key="post:second" style="left: 60%; top: 40%"><a id="second" href="/essays/second"><span>Second</span></a></li>
           <li data-atlas-mark data-atlas-key="post:third" style="left: 50%; top: 92%"><a id="third" href="/essays/third"><span>Third</span></a></li>
         </ul>
-      </div></div>
+      </div>
+      <p class="atlas__legend"><a id="latest" class="atlas__key--latest" href="/essays/second" data-atlas-latest="post:second" aria-label="Latest: Second">Latest</a></p>
+      </div>
     </section>
     <p id="outside">Elsewhere</p>
     <section data-atlas-faqs>
@@ -135,61 +137,41 @@ afterEach(() => {
   restoreGlobals();
 });
 
-/**
- * Opens one FAQ as a browser does for exclusive details: the chosen one opens
- * and the open one closes, and only then do their toggle events fire.
- */
-function openFaq(id: string): void {
-  const all = Array.from(
-    window.document.querySelectorAll("details[name=faqs]"),
-  );
-  const changed = all.filter(
-    (details) => details.hasAttribute("open") !== (details.id === id),
-  );
-  // Chosen first, so the page never sees a moment with none open.
-  changed.sort((a, b) => Number(b.id === id) - Number(a.id === id));
-  for (const details of changed)
-    if (details.id === id) details.setAttribute("open", "");
-    else details.removeAttribute("open");
-  for (const details of changed)
-    details.dispatchEvent(new window.Event("toggle"));
-}
-
-function reader(): string | undefined {
-  return window.document.querySelector("[data-atlas-faqs-reader]")?.innerHTML;
-}
-
 describe("published FAQs under the atlas", () => {
-  it("reads the open answer beside the questions on a wide screen", () => {
+  // They are plain disclosures: closed until tapped, on every screen.
+  it("leaves them as plain disclosures on a wide screen", () => {
     setup({ touch: false });
     const band = window.document.querySelector("[data-atlas-faqs]");
-    expect(band?.hasAttribute("data-split")).toBe(true);
-    expect(reader()).toContain("First <strong>answer</strong>.");
-    openFaq("faq-two");
-    expect(reader()).toContain("Second answer.");
-  });
-
-  it("keeps one answer open while they read side by side", () => {
-    setup({ touch: false });
+    expect(band?.hasAttribute("data-split")).toBe(false);
+    expect(
+      window.document.querySelector("[data-atlas-faqs-reader]"),
+    ).toBeNull();
     const first = window.document.querySelector("#faq-one");
     first?.removeAttribute("open");
     first?.dispatchEvent(new window.Event("toggle"));
-    expect(first?.hasAttribute("open")).toBe(true);
-    expect(reader()).toContain("First <strong>answer</strong>.");
-  });
-
-  it("leaves the questions stacked on a narrow screen", () => {
-    setup({ touch: true, narrow: true });
-    expect(
-      window.document
-        .querySelector("[data-atlas-faqs]")
-        ?.hasAttribute("data-split"),
-    ).toBe(false);
-    expect(reader()).toBeUndefined();
+    expect(first?.hasAttribute("open")).toBe(false);
   });
 });
 
 describe("atlas on touch screens", () => {
+  it("opens the latest piece's card on the first tap even with the tap's emulated hover and focus", () => {
+    setup({ touch: true });
+    const latest = window.document.querySelector("#latest");
+    if (!latest) throw new Error("missing #latest");
+    // A touch browser fires these before the tap's click.
+    latest.dispatchEvent(new window.Event("mouseenter"));
+    latest.dispatchEvent(new window.Event("focus"));
+    expect(tap("#latest")).toBe(false);
+    expect(openMarks()).toEqual(["second"]);
+  });
+
+  it("opens the latest piece's card from the legend's Latest, then follows it", () => {
+    setup({ touch: true });
+    expect(tap("#latest")).toBe(false);
+    expect(openMarks()).toEqual(["second"]);
+    expect(tap("#latest")).toBe(true);
+  });
+
   it("shows a mark's title on the first tap and follows it on the second", () => {
     setup({ touch: true });
     expect(tap("#first")).toBe(false);
@@ -282,6 +264,22 @@ describe("atlas with a mouse", () => {
     setup({ touch: false });
     expect(tap("#first")).toBe(true);
     expect(openMarks()).toEqual([]);
+  });
+
+  it("shows the latest piece's card while the legend's Latest is hovered or focused", () => {
+    setup({ touch: false });
+    const latest = window.document.querySelector("#latest");
+    if (!latest) throw new Error("missing #latest");
+    for (const [on, off] of [
+      ["mouseenter", "mouseleave"],
+      ["focus", "blur"],
+    ] as const) {
+      latest.dispatchEvent(new window.Event(on));
+      expect(openMarks()).toEqual(["second"]);
+      latest.dispatchEvent(new window.Event(off));
+      expect(openMarks()).toEqual([]);
+    }
+    expect(tap("#latest")).toBe(true);
   });
 });
 

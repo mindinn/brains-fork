@@ -1,5 +1,93 @@
 # @brains/contact
 
+## 0.2.0-alpha.478
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/console-theme@0.2.0-alpha.478
+  - @brains/contracts@0.2.0-alpha.478
+  - @brains/site-composition@0.2.0-alpha.478
+  - @brains/utils@0.2.0-alpha.478
+  - @brains/plugins@0.2.0-alpha.478
+
+## 0.2.0-alpha.477
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/plugins@0.2.0-alpha.477
+  - @brains/console-theme@0.2.0-alpha.477
+  - @brains/contracts@0.2.0-alpha.477
+  - @brains/site-composition@0.2.0-alpha.477
+  - @brains/utils@0.2.0-alpha.477
+
+## 0.2.0-alpha.476
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/console-theme@0.2.0-alpha.476
+  - @brains/contracts@0.2.0-alpha.476
+  - @brains/site-composition@0.2.0-alpha.476
+  - @brains/utils@0.2.0-alpha.476
+  - @brains/plugins@0.2.0-alpha.476
+
+## 0.2.0-alpha.475
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/console-theme@0.2.0-alpha.475
+  - @brains/contracts@0.2.0-alpha.475
+  - @brains/site-composition@0.2.0-alpha.475
+  - @brains/utils@0.2.0-alpha.475
+  - @brains/plugins@0.2.0-alpha.475
+
+## 0.2.0-alpha.474
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/console-theme@0.2.0-alpha.474
+  - @brains/contracts@0.2.0-alpha.474
+  - @brains/site-composition@0.2.0-alpha.474
+  - @brains/utils@0.2.0-alpha.474
+  - @brains/plugins@0.2.0-alpha.474
+
+## 0.2.0-alpha.473
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/console-theme@0.2.0-alpha.473
+  - @brains/contracts@0.2.0-alpha.473
+  - @brains/site-composition@0.2.0-alpha.473
+  - @brains/utils@0.2.0-alpha.473
+  - @brains/plugins@0.2.0-alpha.473
+
+## 0.2.0-alpha.472
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/console-theme@0.2.0-alpha.472
+  - @brains/contracts@0.2.0-alpha.472
+  - @brains/site-composition@0.2.0-alpha.472
+  - @brains/utils@0.2.0-alpha.472
+  - @brains/plugins@0.2.0-alpha.472
+
+## 0.2.0-alpha.471
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/console-theme@0.2.0-alpha.471
+  - @brains/contracts@0.2.0-alpha.471
+  - @brains/site-composition@0.2.0-alpha.471
+  - @brains/utils@0.2.0-alpha.471
+  - @brains/plugins@0.2.0-alpha.471
+
 ## 0.2.0-alpha.470
 
 ### Patch Changes

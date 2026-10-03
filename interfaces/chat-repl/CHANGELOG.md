@@ -1,5 +1,77 @@
 # @brains/chat-repl
 
+## 0.2.0-alpha.478
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/utils@0.2.0-alpha.478
+  - @brains/job-queue@0.2.0-alpha.478
+  - @brains/plugins@0.2.0-alpha.478
+
+## 0.2.0-alpha.477
+
+### Patch Changes
+
+- Updated dependencies [[`e1f56b3`](https://github.com/rizom-ai/brains/commit/e1f56b35ff11affce5dee81584121147e3889125)]:
+  - @brains/job-queue@0.2.0-alpha.477
+  - @brains/plugins@0.2.0-alpha.477
+  - @brains/utils@0.2.0-alpha.477
+
+## 0.2.0-alpha.476
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/utils@0.2.0-alpha.476
+  - @brains/job-queue@0.2.0-alpha.476
+  - @brains/plugins@0.2.0-alpha.476
+
+## 0.2.0-alpha.475
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/utils@0.2.0-alpha.475
+  - @brains/job-queue@0.2.0-alpha.475
+  - @brains/plugins@0.2.0-alpha.475
+
+## 0.2.0-alpha.474
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/utils@0.2.0-alpha.474
+  - @brains/job-queue@0.2.0-alpha.474
+  - @brains/plugins@0.2.0-alpha.474
+
+## 0.2.0-alpha.473
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/utils@0.2.0-alpha.473
+  - @brains/job-queue@0.2.0-alpha.473
+  - @brains/plugins@0.2.0-alpha.473
+
+## 0.2.0-alpha.472
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/utils@0.2.0-alpha.472
+  - @brains/job-queue@0.2.0-alpha.472
+  - @brains/plugins@0.2.0-alpha.472
+
+## 0.2.0-alpha.471
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/utils@0.2.0-alpha.471
+  - @brains/job-queue@0.2.0-alpha.471
+  - @brains/plugins@0.2.0-alpha.471
+
 ## 0.2.0-alpha.470
 
 ### Patch Changes

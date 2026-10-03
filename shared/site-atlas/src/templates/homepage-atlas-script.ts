@@ -13,6 +13,8 @@ export const HOMEPAGE_ATLAS_SCRIPT_PATH = "/scripts/homepage-atlas.js";
  *
  * - Touch screens have no hover, so the first tap on a mark opens its title
  *   card and the second follows the link. Tapping elsewhere or Escape closes.
+ * - The legend's "Latest" opens the latest piece's card: while hovered or
+ *   focused, and on a touch screen at the first tap, the second following it.
  *   Marks crowd on a phone and their hit targets overlap, so a tap in the map
  *   resolves to the nearest mark within a fingertip, not the one on top.
  * - With guest chat docked, a topic fills the chat draft instead of opening
@@ -35,54 +37,8 @@ export const HOMEPAGE_ATLAS_SCRIPT_PATH = "/scripts/homepage-atlas.js";
  *   and on resize.
  * - The terrain's drift pauses (data-still) while the map is off screen and
  *   while the tab is hidden; reduced motion keeps it still throughout.
- * - Published FAQs under the atlas are disclosures, one open at a time. On a
- *   wide screen the open answer reads beside the questions (data-split), and
- *   one always stays open; narrow screens keep them stacked.
  */
 export const HOMEPAGE_ATLAS_SCRIPT: string = `(function () {
-  document.querySelectorAll("[data-atlas-faqs]").forEach(function (band) {
-    var index = band.querySelector(".faqs__index");
-    if (!index) return;
-    var stacked = window.matchMedia
-      ? window.matchMedia("(max-width: 60rem)")
-      : { matches: true, addEventListener: function () {} };
-    var reader = null;
-    function show() {
-      if (!reader) return;
-      var open = band.querySelector("details[open] .faqs__answer");
-      reader.innerHTML = open ? open.innerHTML : "";
-    }
-    function layout() {
-      if (stacked.matches) {
-        band.removeAttribute("data-split");
-        if (reader) reader.remove();
-        reader = null;
-        return;
-      }
-      band.setAttribute("data-split", "");
-      if (!reader) {
-        reader = document.createElement("div");
-        reader.className = "faqs__reader";
-        reader.setAttribute("data-atlas-faqs-reader", "");
-        reader.setAttribute("aria-live", "polite");
-        index.parentNode.appendChild(reader);
-      }
-      show();
-    }
-    band.querySelectorAll("details").forEach(function (details) {
-      details.addEventListener("toggle", function () {
-        // Side by side, an answer always shows: closing the open one keeps it open.
-        if (reader && !details.hasAttribute("open") && !band.querySelector("details[open]")) {
-          details.setAttribute("open", "");
-          return;
-        }
-        show();
-      });
-    });
-    if (stacked.addEventListener) stacked.addEventListener("change", layout);
-    layout();
-  });
-
   var roots = document.querySelectorAll("[data-atlas]");
   if (!roots.length) return;
 
@@ -493,8 +449,39 @@ export const HOMEPAGE_ATLAS_SCRIPT: string = `(function () {
       followLeads(Date.now() + TURN);
     });
 
+    var latestKey = root.querySelector("[data-atlas-latest]");
+    var latestMark = latestKey
+      ? root.querySelector('[data-atlas-key="' + latestKey.getAttribute("data-atlas-latest") + '"]')
+      : null;
+    function openLatest() {
+      if (!latestMark || open === latestMark) return;
+      close();
+      open = latestMark;
+      latestMark.setAttribute("data-open", "");
+    }
+    // A touch browser emulates hover and focus before a tap's click; there the tap alone opens it.
+    function previewLatest() {
+      if (!touch.matches) openLatest();
+    }
+    function endPreview() {
+      if (!touch.matches && open === latestMark) close();
+    }
+    if (latestKey && latestMark) {
+      latestKey.addEventListener("mouseenter", previewLatest);
+      latestKey.addEventListener("focus", previewLatest);
+      latestKey.addEventListener("mouseleave", endPreview);
+      latestKey.addEventListener("blur", endPreview);
+    }
+
     root.addEventListener("click", function (event) {
       var target = event.target;
+      // A first tap on "Latest" opens the latest piece's card; the next follows the link.
+      if (latestMark && touch.matches && target && target.closest && target.closest("[data-atlas-latest]")) {
+        if (open === latestMark) return;
+        event.preventDefault();
+        openLatest();
+        return;
+      }
       var fill = target && target.closest ? target.closest("[data-atlas-fill]") : null;
       if (fill) {
         var draft = liveDraft();

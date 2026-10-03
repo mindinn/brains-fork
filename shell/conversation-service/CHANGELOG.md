@@ -1,5 +1,85 @@
 # @brains/conversation-service
 
+## 0.2.0-alpha.478
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.478
+  - @brains/db@0.2.0-alpha.478
+  - @brains/utils@0.2.0-alpha.478
+  - @brains/messaging-service@0.2.0-alpha.478
+
+## 0.2.0-alpha.477
+
+### Patch Changes
+
+- Updated dependencies [[`93832d8`](https://github.com/rizom-ai/brains/commit/93832d829d34bf719587b10c3d3d206cfb020b49)]:
+  - @brains/db@0.2.0-alpha.477
+  - @brains/contracts@0.2.0-alpha.477
+  - @brains/utils@0.2.0-alpha.477
+  - @brains/messaging-service@0.2.0-alpha.477
+
+## 0.2.0-alpha.476
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.476
+  - @brains/db@0.2.0-alpha.476
+  - @brains/utils@0.2.0-alpha.476
+  - @brains/messaging-service@0.2.0-alpha.476
+
+## 0.2.0-alpha.475
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.475
+  - @brains/db@0.2.0-alpha.475
+  - @brains/utils@0.2.0-alpha.475
+  - @brains/messaging-service@0.2.0-alpha.475
+
+## 0.2.0-alpha.474
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.474
+  - @brains/db@0.2.0-alpha.474
+  - @brains/utils@0.2.0-alpha.474
+  - @brains/messaging-service@0.2.0-alpha.474
+
+## 0.2.0-alpha.473
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.473
+  - @brains/db@0.2.0-alpha.473
+  - @brains/utils@0.2.0-alpha.473
+  - @brains/messaging-service@0.2.0-alpha.473
+
+## 0.2.0-alpha.472
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.472
+  - @brains/db@0.2.0-alpha.472
+  - @brains/utils@0.2.0-alpha.472
+  - @brains/messaging-service@0.2.0-alpha.472
+
+## 0.2.0-alpha.471
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.471
+  - @brains/db@0.2.0-alpha.471
+  - @brains/utils@0.2.0-alpha.471
+  - @brains/messaging-service@0.2.0-alpha.471
+
 ## 0.2.0-alpha.470
 
 ### Patch Changes
