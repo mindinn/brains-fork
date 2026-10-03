@@ -13,6 +13,7 @@ import type {
 } from "./types";
 import {
   resolveTextModelCapabilities,
+  unsupportedReasoningEffort,
   type TextModelCapabilities,
 } from "./provider-selection";
 import {
@@ -47,7 +48,14 @@ export class AIService implements IAIService {
     this.config = withAIModelDefaults(config);
     this.logger = logger.child("AIService");
     this.providers = createProviderClients(this.config);
-    this.capabilities = resolveTextModelCapabilities(this.config.model);
+    this.capabilities = this.resolveCapabilities();
+  }
+
+  private resolveCapabilities(): TextModelCapabilities {
+    const { model, reasoningEffort } = this.config;
+    const unsupported = unsupportedReasoningEffort(model, reasoningEffort);
+    if (unsupported) this.logger.warn(unsupported);
+    return resolveTextModelCapabilities(model, reasoningEffort);
   }
 
   /**
@@ -191,9 +199,7 @@ export class AIService implements IAIService {
       this.providers = createProviderClients(this.config);
       this.cachedModel = null;
     }
-    if (modelChanged) {
-      this.capabilities = resolveTextModelCapabilities(this.config.model);
-    }
+    this.capabilities = this.resolveCapabilities();
     this.logger.info("AI configuration updated", {
       model: this.config.model,
     });

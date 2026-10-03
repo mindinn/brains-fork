@@ -31,7 +31,9 @@ export function createAIModelConfig(config: ShellConfig): AIModelConfig {
     apiKey: config.ai.apiKey,
     model: config.ai.model,
     temperature: config.ai.temperature,
-    maxTokens: config.ai.maxTokens,
+    ...(config.ai.maxTokens !== undefined && {
+      maxTokens: config.ai.maxTokens,
+    }),
     webSearch: config.ai.webSearch,
     ...(config.ai.reasoningEffort && {
       reasoningEffort: config.ai.reasoningEffort,

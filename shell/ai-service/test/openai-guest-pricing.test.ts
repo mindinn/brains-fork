@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { LanguageModelUsage } from "ai";
 import {
   guestTurnSettlement,
+  openAiGuestPricing,
   openAiEmbeddingPricingRevision,
   openAiGuestPricingRevision,
   priceOpenAiGuestTurn,
@@ -217,5 +218,66 @@ describe("a guest turn's embeddings in its settlement", () => {
 
   it("changes nothing for a turn that embedded nothing", () => {
     expect(withEmbeddingUsage(settled, [])).toEqual(settled);
+  });
+});
+
+describe("guest pricing by configured model", () => {
+  const call = {
+    input: 10_000,
+    cacheRead: 4_000,
+    cacheWrite: undefined,
+    output: 500,
+  };
+
+  it("prices gpt-6-luna at its published rates", () => {
+    // 6,000 × $0.10/M + 4,000 × $0.01/M + 500 × $0.50/M
+    expect(openAiGuestPricing("gpt-6-luna")?.({ calls: [call] })).toEqual({
+      state: "known",
+      microUsd: 890,
+      pricing: "openai-gpt-6-luna-2026-10-01",
+    });
+  });
+
+  it("prices gpt-6-sol at its published rates", () => {
+    // 6,000 × $2/M + 4,000 × $0.20/M + 500 × $10/M
+    expect(openAiGuestPricing("openai:gpt-6-sol")?.({ calls: [call] })).toEqual(
+      {
+        state: "known",
+        microUsd: 17_800,
+        pricing: "openai-gpt-6-sol-2026-10-01",
+      },
+    );
+  });
+
+  it("prices GPT-6 long-context cached input at the published 2x rate", () => {
+    // 200,000 × $0.20/M + 100,000 × $0.02/M + 1,000 × $0.75/M
+    expect(
+      openAiGuestPricing("gpt-6-luna")?.({
+        calls: [
+          {
+            input: 300_000,
+            cacheRead: 100_000,
+            cacheWrite: undefined,
+            output: 1_000,
+          },
+        ],
+      }),
+    ).toEqual({
+      state: "known",
+      microUsd: 42_750,
+      pricing: "openai-gpt-6-luna-2026-10-01",
+    });
+  });
+
+  it("keeps gpt-5.6-luna on its pinned revision", () => {
+    expect(openAiGuestPricing("gpt-5.6-luna")?.({ calls: [call] })).toEqual(
+      priceOpenAiGuestTurn({ calls: [call] }),
+    );
+  });
+
+  it("leaves models without published rates unpriced", () => {
+    expect(openAiGuestPricing("gpt-6-astra")).toBeUndefined();
+    expect(openAiGuestPricing("claude-sonnet-4-6")).toBeUndefined();
+    expect(openAiGuestPricing(undefined)).toBeUndefined();
   });
 });
