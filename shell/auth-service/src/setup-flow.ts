@@ -106,6 +106,23 @@ export class SetupFlow {
     return this.setupToken;
   }
 
+  /**
+   * The in-memory setup token, only while the store still accepts it.
+   * Another runtime on the same auth database (the worker next to the web
+   * runtime) saves its own untargeted token at startup, which consumes this
+   * one. Revealing it then hands out a /setup URL that answers 404.
+   */
+  private async getLiveSetupToken(): Promise<SetupTokenState | undefined> {
+    const setupToken = this.getValidSetupToken();
+    if (!setupToken) return undefined;
+    const now = Math.floor(Date.now() / 1000);
+    if (await this.setupStateStore.hasValidSetupToken(setupToken.token, now)) {
+      return setupToken;
+    }
+    this.setupToken = undefined;
+    return undefined;
+  }
+
   async resolveSetupToken(
     request: Request,
   ): Promise<ResolvedSetupToken | undefined> {
@@ -166,7 +183,7 @@ export class SetupFlow {
   ): Promise<PasskeySetupRequired | undefined> {
     return this.setupOperations.run(async () => {
       if (await this.passkeyService.hasCredentials()) return undefined;
-      let setupToken = this.getValidSetupToken();
+      let setupToken = await this.getLiveSetupToken();
       if (!setupToken && options.rotateHidden) {
         const now = Math.floor(Date.now() / 1000);
         if (await this.setupStateStore.hasActiveSetupDelivery(now)) {

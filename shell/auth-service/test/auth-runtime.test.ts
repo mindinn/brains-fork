@@ -516,6 +516,28 @@ describe("AuthRuntime lifecycle", () => {
     });
   });
 
+  it("reveals a live setup URL after another runtime on the same store replaced the token", async () => {
+    // `brain start` runs a web and a worker runtime on one auth database.
+    // Each initializes auth and saves an untargeted setup token, and saving
+    // one consumes the other, so the web runtime's in-memory token is dead.
+    const storageDir = await mkdtemp(join(tmpdir(), "brains-auth-shared-"));
+    tempDirs.push(storageDir);
+    const web = await createRuntime({ storageDir });
+    const worker = await createRuntime({ storageDir });
+    await web.initialize();
+    await worker.initialize();
+
+    const required = await web.setupFlow.getPasskeySetupRequired(
+      "https://brain.example.com",
+      { rotateHidden: true },
+    );
+    if (!required) throw new Error("Missing setup URL");
+
+    expect(
+      await web.setupFlow.resolveSetupToken(new Request(required.setupUrl)),
+    ).toMatchObject({ targetUserId: null, deliveryClaimId: null });
+  });
+
   it("serializes concurrent setup-token requests through successful persistence", async () => {
     const runtime = await createRuntime();
     const store = runtime.setupFlow["setupStateStore"];
