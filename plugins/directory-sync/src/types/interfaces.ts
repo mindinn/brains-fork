@@ -1,6 +1,7 @@
 import type { BaseEntity, ServicePluginContext } from "@brains/plugins";
 import type { ProgressReporter } from "@brains/utils/progress";
 import type { BatchMetadata } from "./batch";
+import type { MatchesHead } from "../lib/file-watcher";
 import type {
   CleanupResult,
   DirectorySyncStatus,
@@ -38,7 +39,9 @@ export interface IFileOperations {
 export interface IDirectorySync {
   initialize(): Promise<void>;
   initializeDirectory(): Promise<void>;
-  setJobQueueCallback(callback: (job: JobRequest) => Promise<string>): void;
+  setJobQueueCallback(
+    callback: (job: JobRequest) => Promise<string | undefined>,
+  ): void;
   sync(): Promise<{
     export: ExportResult;
     import: ImportResult;
@@ -87,6 +90,10 @@ export interface IDirectorySync {
   startWatching(): Promise<void>;
   stopWatching(): Promise<void>;
   suppressWatchPaths(paths: string[]): void;
+  /** Ignore the watcher's echoes of a pull while each path matches HEAD. */
+  ignorePulledWatchPaths(paths: string[], matchesHead: MatchesHead): void;
+  /** The paths whose files are not already their stored entity's export. */
+  withoutStoredEchoes(paths: string[]): Promise<string[]>;
   recordPendingPullDeletes(paths: string[]): Promise<void>;
   isPendingDelete(entityType: string, entityId: string): boolean;
   completePendingDelete(

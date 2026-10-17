@@ -1,9 +1,20 @@
 import {
+  AttachmentCardDataSchema,
   StructuredChatCardSchema,
   type AgentContextItem,
+  type AssistantTurn,
 } from "@brains/contracts";
 import { z } from "@brains/utils/zod";
+import { markdownBody } from "@brains/entity-service";
+import {
+  entitySourceCitation,
+  entityTitle,
+  metadataString,
+  type EntityLinks,
+} from "./entity-citation";
 import { definedFields } from "@brains/utils/strip-undefined";
+import { getErrorMessage } from "@brains/utils/error";
+import { SourceCitationSchema } from "@brains/contracts";
 import {
   toolConfirmationSchema,
   toolErrorSchema,
@@ -19,6 +30,13 @@ import type {
 } from "./agent-types";
 
 const toolCallArgsSchema = z.record(z.string(), z.unknown());
+const sdkToolErrorSchema = z.object({
+  type: z.literal("tool-error"),
+  toolCallId: z.string(),
+  toolName: z.string(),
+  input: z.unknown(),
+  error: z.unknown(),
+});
 const jobIdSchema = z.looseObject({ jobId: z.string() });
 const sourceEntitySchema = z.looseObject({
   id: z.string().min(1),
@@ -36,6 +54,10 @@ const searchToolDataSchema = z.object({
 });
 const getToolDataSchema = z.object({
   entity: sourceEntitySchema,
+});
+/** A tool that attributes its own sources, such as the network's answers. */
+const toolSourcesDataSchema = z.object({
+  sources: z.array(z.unknown()),
 });
 const structuredChatCardParserSchema = z.custom<StructuredChatCard>(
   (value) => StructuredChatCardSchema.safeParse(value).success,
@@ -56,21 +78,7 @@ const attachmentToolDataSchema = z
   .object({
     documentId: z.string().min(1).optional(),
     entityId: z.string().min(1).optional(),
-    attachment: z.object({
-      mediaType: z.string().min(1),
-      url: z.string().min(1),
-      downloadUrl: z.string().min(1).optional(),
-      previewUrl: z.string().min(1).optional(),
-      filename: z.string().min(1).optional(),
-      sizeBytes: z.number().nonnegative().optional(),
-      source: z
-        .object({
-          entityType: z.string().optional(),
-          entityId: z.string().optional(),
-          attachmentType: z.string().optional(),
-        })
-        .optional(),
-    }),
+    attachment: AttachmentCardDataSchema,
   })
   .transform((data, ctx) => {
     // A card is addressed by whichever id the tool supplied. Resolving it here
@@ -197,57 +205,23 @@ export function buildSourcesCardFromContextItems(
   };
 }
 
-function getMetadataString(
-  metadata: Record<string, unknown>,
-  key: string,
-): string | undefined {
-  const value = metadata[key];
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim()
-    : undefined;
-}
-
-function getEntityTitle(entity: z.infer<typeof sourceEntitySchema>): string {
-  return (
-    getMetadataString(entity.metadata, "title") ??
-    getMetadataString(entity.metadata, "name") ??
-    getMetadataString(entity.metadata, "slug") ??
-    entity.id
-  );
-}
-
-function getEntityUrl(
-  entity: z.infer<typeof sourceEntitySchema>,
-): string | undefined {
-  return (
-    getMetadataString(entity.metadata, "url") ??
-    getMetadataString(entity.metadata, "permalink") ??
-    getMetadataString(entity.metadata, "canonicalUrl")
-  );
-}
-
 function buildSourceCitationFromEntity(params: {
   toolName: string;
   entity: z.infer<typeof sourceEntitySchema>;
   excerpt?: string | undefined;
   score?: number | undefined;
+  links: EntityLinks | undefined;
 }): SourceCitation {
   const { entity, toolName, score } = params;
   const excerpt =
     params.excerpt !== undefined
       ? truncateSourceExcerpt(params.excerpt)
       : entity.content !== undefined
-        ? truncateSourceExcerpt(entity.content)
+        ? truncateSourceExcerpt(markdownBody(entity.content))
         : undefined;
-  const url = getEntityUrl(entity);
-
   return {
-    id: `${entity.entityType}:${entity.id}`,
-    title: getEntityTitle(entity),
-    source: entity.entityType,
-    entityType: entity.entityType,
-    entityId: entity.id,
-    ...definedFields({ url, excerpt }),
+    ...entitySourceCitation(entity, params.links),
+    ...definedFields({ excerpt }),
     provenance: {
       toolName,
       ...definedFields({ score }),
@@ -264,6 +238,7 @@ interface SourceCandidate {
 function buildToolSourceCitations(params: {
   toolName: string;
   data: unknown;
+  links: EntityLinks | undefined;
 }): SourceCandidate[] {
   if (params.toolName === "system_search") {
     const parsed = searchToolDataSchema.safeParse(params.data);
@@ -281,6 +256,7 @@ function buildToolSourceCitations(params: {
           entity: result.entity,
           excerpt: result.excerpt,
           score: result.score,
+          links: params.links,
         }),
       }));
   }
@@ -293,9 +269,19 @@ function buildToolSourceCitations(params: {
         citation: buildSourceCitationFromEntity({
           toolName: params.toolName,
           entity: parsed.data.entity,
+          links: params.links,
         }),
       },
     ];
+  }
+
+  // A tool's own citations count like a direct read: kept whatever the answer names.
+  const own = toolSourcesDataSchema.safeParse(params.data);
+  if (own.success) {
+    return own.data.sources.flatMap((source) => {
+      const citation = SourceCitationSchema.safeParse(source);
+      return citation.success ? [{ citation: citation.data }] : [];
+    });
   }
 
   return [];
@@ -386,10 +372,173 @@ export interface ExtractedResults {
   totalToolCalls: number;
 }
 
+type AgentStep = BrainAgentResult["steps"][number];
+type StepToolResult = AgentStep["toolResults"][number];
+type ToolCallArgs = Map<string, Record<string, unknown>>;
+
+/** A step's record-shaped call arguments, by the id of the call that sent them. */
+export function toolCallArgs(step: AgentStep): ToolCallArgs {
+  return new Map(
+    step.toolCalls.flatMap((call) => {
+      if (!call.toolCallId) return [];
+      const parsed = toolCallArgsSchema.safeParse(call.input);
+      return parsed.success ? [[call.toolCallId, parsed.data] as const] : [];
+    }),
+  );
+}
+
+export interface StepFailures {
+  results: ToolResultData[];
+  /** The calls that failed, whose results are not counted again. */
+  callIds: Set<string>;
+}
+
+/**
+ * SDK validation can reject a call before our handler runs; execution
+ * exceptions likewise appear in content rather than toolResults. Keep
+ * both as attempted calls so retries cannot turn failures invisible.
+ */
+export function stepFailures(
+  step: AgentStep,
+  args: ToolCallArgs,
+): StepFailures {
+  const rejected = step.toolCalls.filter(
+    (call) => call.invalid === true || call.error !== undefined,
+  );
+  const callIds = new Set(rejected.map((call) => call.toolCallId));
+  const results: ToolResultData[] = rejected.map((call) => ({
+    toolName: call.toolName,
+    ...definedFields({ args: args.get(call.toolCallId) }),
+    error: {
+      code: "invalid_tool_call",
+      message: getErrorMessage(call.error, "SDK rejected the tool call"),
+    },
+  }));
+  for (const part of step.content ?? []) {
+    const parsed = sdkToolErrorSchema.safeParse(part);
+    if (!parsed.success || callIds.has(parsed.data.toolCallId)) continue;
+    const failure = parsed.data;
+    callIds.add(failure.toolCallId);
+    const input = toolCallArgsSchema.safeParse(failure.input);
+    results.push({
+      toolName: failure.toolName,
+      ...definedFields({
+        args: input.success ? input.data : args.get(failure.toolCallId),
+      }),
+      error: {
+        code: "tool_execution_failed",
+        message: getErrorMessage(failure.error, "Tool execution failed"),
+      },
+    });
+  }
+  return { results, callIds };
+}
+
+export interface RequestedConfirmation {
+  confirmation: PendingConfirmation;
+  card: StructuredChatCard;
+}
+
+/**
+ * A tool's request for approval, as the confirmation the turn holds and the
+ * card that shows it; both carry the same id and copy.
+ */
+export function confirmationFrom(params: {
+  toolResult: StepToolResult;
+  /** What the call sent, shown on the card. */
+  args: Record<string, unknown> | undefined;
+  /** Names the approval when its call has no id. */
+  toolCallsSoFar: number;
+}): RequestedConfirmation | undefined {
+  const { toolResult } = params;
+  const parsed = toolConfirmationSchema.safeParse(toolResult.output);
+  if (!parsed.success) return undefined;
+  const request = parsed.data;
+  const shared = {
+    id: toolResult.toolCallId
+      ? `approval:${toolResult.toolCallId}`
+      : `approval:${toolResult.toolName}:${params.toolCallsSoFar}`,
+    toolName: request.toolName,
+    summary: request.summary,
+    ...definedFields({
+      toolCallId: toolResult.toolCallId,
+      completionSummary: request.completionSummary,
+      preview: request.preview,
+    }),
+  };
+  return {
+    confirmation: { ...shared, args: request.args },
+    card: {
+      kind: "tool-approval",
+      ...shared,
+      state: "approval-requested",
+      ...definedFields({ input: params.args }),
+    },
+  };
+}
+
+export interface ToolOutcome {
+  result: ToolResultData;
+  cards: StructuredChatCard[];
+  sources: SourceCandidate[];
+}
+
+/**
+ * A tool's output as the turn records it: its result, the cards it shows and
+ * the sources it read. A cached repeat records nothing.
+ */
+export function toolResultFrom(params: {
+  toolResult: StepToolResult;
+  args: Record<string, unknown> | undefined;
+  links: EntityLinks | undefined;
+}): ToolOutcome | undefined {
+  const { toolName, output } = params.toolResult;
+  const parsed = toolResponseSchema.safeParse(output);
+  if (!parsed.success) return { result: { toolName }, cards: [], sources: [] };
+
+  const success = toolSuccessSchema.safeParse(parsed.data);
+  if (success.success && success.data.cached === true) return undefined;
+
+  const failure = toolErrorSchema.safeParse(parsed.data);
+  const data =
+    success.success && success.data.data != null
+      ? success.data.data
+      : undefined;
+  const job = jobIdSchema.safeParse(data);
+  const result: ToolResultData = {
+    toolName,
+    ...definedFields({
+      args: params.args,
+      error: failure.success
+        ? {
+            message: failure.data.error,
+            ...definedFields({ code: failure.data.code }),
+          }
+        : undefined,
+      data,
+      jobId: job.success ? job.data.jobId : undefined,
+    }),
+  };
+  if (data === undefined) return { result, cards: [], sources: [] };
+
+  const structuredCards = toolDataCardsSchema.safeParse(data);
+  const attachmentCard = buildAttachmentCardFromToolData(data);
+  return {
+    result,
+    cards: [
+      ...(structuredCards.success ? structuredCards.data.cards : []),
+      ...(attachmentCard ? [attachmentCard] : []),
+    ],
+    sources: buildToolSourceCitations({ toolName, data, links: params.links }),
+  };
+}
+
 export function extractToolResults(
   steps: BrainAgentResult["steps"],
   /** The answer, when known: its sources are the results it names. */
   answer?: string,
+  /** Where the site shows entities, so a source links to its page. */
+  links?: EntityLinks,
 ): ExtractedResults {
   const toolResults: ToolResultData[] = [];
   const cards: StructuredChatCard[] = [];
@@ -399,116 +548,40 @@ export function extractToolResults(
 
   for (const step of steps) {
     totalToolCalls += step.toolCalls.length;
-    const toolCallArgsMap = new Map<string, Record<string, unknown>>();
-    for (const tc of step.toolCalls) {
-      if (tc.toolCallId) {
-        const parsed = toolCallArgsSchema.safeParse(tc.input);
-        if (parsed.success) {
-          toolCallArgsMap.set(tc.toolCallId, parsed.data);
-        }
-      }
-    }
+    const args = toolCallArgs(step);
+    const failures = stepFailures(step, args);
+    toolResults.push(...failures.results);
 
-    let stepRequestedConfirmation = false;
+    // A step asks once per tool, however many of its calls want approval.
     const confirmedToolNames = new Set<string>();
+    for (const toolResult of step.toolResults) {
+      if (failures.callIds.has(toolResult.toolCallId)) continue;
+      if (toolResult.output === null) continue;
+      const callArgs = args.get(toolResult.toolCallId);
 
-    for (const tr of step.toolResults) {
-      if (tr.output === null) continue;
-
-      const confirmationParsed = toolConfirmationSchema.safeParse(tr.output);
-      if (confirmationParsed.success) {
-        if (confirmedToolNames.has(confirmationParsed.data.toolName)) continue;
-        confirmedToolNames.add(confirmationParsed.data.toolName);
-        const approvalId = tr.toolCallId
-          ? `approval:${tr.toolCallId}`
-          : `approval:${tr.toolName}:${totalToolCalls}`;
-        const args = tr.toolCallId
-          ? toolCallArgsMap.get(tr.toolCallId)
-          : undefined;
-        const confirmation: PendingConfirmation = {
-          id: approvalId,
-          toolName: confirmationParsed.data.toolName,
-          summary: confirmationParsed.data.summary,
-          args: confirmationParsed.data.args,
-          ...definedFields({
-            toolCallId: tr.toolCallId,
-            completionSummary: confirmationParsed.data.completionSummary,
-            preview: confirmationParsed.data.preview,
-          }),
-        };
-        pendingConfirmations.push(confirmation);
-        stepRequestedConfirmation = true;
-
-        cards.push({
-          kind: "tool-approval",
-          id: approvalId,
-          toolName: confirmationParsed.data.toolName,
-          summary: confirmationParsed.data.summary,
-          state: "approval-requested",
-          ...definedFields({
-            toolCallId: tr.toolCallId,
-            input: args,
-            completionSummary: confirmationParsed.data.completionSummary,
-            preview: confirmationParsed.data.preview,
-          }),
-        });
+      const requested = confirmationFrom({
+        toolResult,
+        args: callArgs,
+        toolCallsSoFar: totalToolCalls,
+      });
+      if (requested) {
+        const { toolName } = requested.confirmation;
+        if (confirmedToolNames.has(toolName)) continue;
+        confirmedToolNames.add(toolName);
+        pendingConfirmations.push(requested.confirmation);
+        cards.push(requested.card);
         continue;
       }
 
-      const parsed = toolResponseSchema.safeParse(tr.output);
-      if (!parsed.success) {
-        toolResults.push({ toolName: tr.toolName });
-        continue;
-      }
-
-      const successParsed = toolSuccessSchema.safeParse(parsed.data);
-      if (successParsed.success && successParsed.data.cached === true) {
-        continue;
-      }
-
-      const args = tr.toolCallId
-        ? toolCallArgsMap.get(tr.toolCallId)
-        : undefined;
-
-      const toolResult: ToolResultData = { toolName: tr.toolName };
-      if (args !== undefined) {
-        toolResult.args = args;
-      }
-
-      const errorParsed = toolErrorSchema.safeParse(parsed.data);
-      if (errorParsed.success) {
-        toolResult.error = {
-          message: errorParsed.data.error,
-          ...definedFields({ code: errorParsed.data.code }),
-        };
-      }
-
-      if (successParsed.success && successParsed.data.data != null) {
-        toolResult.data = successParsed.data.data;
-        const jobIdParsed = jobIdSchema.safeParse(successParsed.data.data);
-        if (jobIdParsed.success) {
-          toolResult.jobId = jobIdParsed.data.jobId;
-        }
-        const structuredCards = toolDataCardsSchema.safeParse(
-          successParsed.data.data,
-        );
-        if (structuredCards.success) cards.push(...structuredCards.data.cards);
-        const attachmentCard = buildAttachmentCardFromToolData(
-          successParsed.data.data,
-        );
-        if (attachmentCard) cards.push(attachmentCard);
-        sourceCandidates.push(
-          ...buildToolSourceCitations({
-            toolName: tr.toolName,
-            data: successParsed.data.data,
-          }),
-        );
-      }
-
-      toolResults.push(toolResult);
+      const outcome = toolResultFrom({ toolResult, args: callArgs, links });
+      if (!outcome) continue;
+      cards.push(...outcome.cards);
+      sourceCandidates.push(...outcome.sources);
+      toolResults.push(outcome.result);
     }
 
-    if (stepRequestedConfirmation) break;
+    // The record ends at the step that asked for approval.
+    if (confirmedToolNames.size > 0) break;
   }
 
   const sourcesCard = buildToolSourcesCard(
@@ -670,8 +743,8 @@ export function buildEntityMemoryRefs(
     for (const entity of listData.data.entities) {
       if (seen.has(entity.id)) continue;
       seen.add(entity.id);
-      const title = getEntityTitle(entity);
-      const status = getMetadataString(entity.metadata, "status");
+      const title = entityTitle(entity);
+      const status = metadataString(entity.metadata, "status");
       refs.push({
         entityType: entity.entityType,
         entityId: entity.id,
@@ -705,4 +778,38 @@ export function buildEntityMemoryContext(refs: EntityMemoryRef[]): string {
     return `- ${details.join("; ")}`;
   });
   return `\n\nInternal entity refs from previous assistant turns for follow-up resolution. These are typed runtime references, not visible user text. Use the canonical entityId when a follow-up refers to the same item (for example “it”, “that”, “that post”, “the draft”, “publish it”, or “a cover image to go with that”). Do not derive or rewrite IDs from titles; copy the exact entityId value from the matching ref. A ref with operation created and status generating/draft is already a valid target for follow-up operations such as cover-image generation; do not ask the user for its slug again.\n${lines.join("\n")}`;
+}
+
+const readEntitySchema = z.object({
+  id: z.string().min(1),
+  entityType: z.string().min(1),
+});
+const getReadSchema = z.object({ entity: readEntitySchema });
+const searchReadSchema = z.object({
+  results: z.array(z.object({ entity: readEntitySchema })),
+});
+
+/** Entities a turn's reads actually returned, once each, in read order. */
+export function buildRetrievedEntityRefs(
+  toolResults: ToolResultData[],
+): AssistantTurn["retrieved"] {
+  const entities = toolResults.flatMap((result) => {
+    if (result.error) return [];
+    if (result.toolName === "system_get") {
+      const read = getReadSchema.safeParse(result.data);
+      return read.success ? [read.data.entity] : [];
+    }
+    if (result.toolName === "system_search") {
+      const read = searchReadSchema.safeParse(result.data);
+      return read.success ? read.data.results.map((hit) => hit.entity) : [];
+    }
+    return [];
+  });
+  const refs = new Map(
+    entities.map((entity) => [
+      `${entity.entityType}/${entity.id}`,
+      { entityType: entity.entityType, entityId: entity.id },
+    ]),
+  );
+  return [...refs.values()].slice(0, 50);
 }

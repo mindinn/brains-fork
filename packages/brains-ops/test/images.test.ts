@@ -1,8 +1,11 @@
 import { caughtError, createTempDir } from "@brains/test-utils";
 import { z } from "@brains/utils/zod";
 import { describe, expect, it } from "bun:test";
+import { rejects } from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { lockRuntimeImage } from "../src/runtime-image-lock";
+import type { RequiredImage } from "../src/image-types";
 
 import {
   imageTagExists,
@@ -14,8 +17,48 @@ import {
 } from "../src/images";
 
 describe("runtimeImageTag", () => {
-  it("uses one plain tag for every instance on a Brain version", () => {
+  it("uses one plain tag for every instance on a Brain version without site pins", () => {
     expect(runtimeImageTag("0.2.0-alpha.350")).toBe("brain-0.2.0-alpha.350");
+    expect(runtimeImageTag("0.2.0-alpha.350", [])).toBe(
+      "brain-0.2.0-alpha.350",
+    );
+  });
+
+  it("names an image by its Brain version and its exact site pins, in one order", () => {
+    const pins = [
+      "@rizom/theme-rizom-ai@0.2.0-alpha.235",
+      "@rizom/site-rizom-ai@0.2.0-alpha.264",
+    ];
+    expect(runtimeImageTag("0.2.0-alpha.483", pins)).toBe(
+      "brain-0.2.0-alpha.483--rizom-site-rizom-ai-0.2.0-alpha.264--rizom-theme-rizom-ai-0.2.0-alpha.235",
+    );
+    expect(runtimeImageTag("0.2.0-alpha.483", [...pins].reverse())).toBe(
+      runtimeImageTag("0.2.0-alpha.483", pins),
+    );
+    // A different pin is a different image.
+    expect(
+      runtimeImageTag("0.2.0-alpha.483", [
+        "@rizom/site-rizom-ai@0.2.0-alpha.263",
+        "@rizom/theme-rizom-ai@0.2.0-alpha.235",
+      ]),
+    ).not.toBe(runtimeImageTag("0.2.0-alpha.483", pins));
+  });
+
+  it("falls back to a digest of the pins when the spelled-out tag would exceed what a registry accepts", () => {
+    const pins = Array.from(
+      { length: 6 },
+      (_, i) => `@rizom/site-with-a-long-name-${i}@0.2.0-alpha.${100 + i}`,
+    );
+    const tag = runtimeImageTag("0.2.0-alpha.483", pins);
+    expect(tag.length).toBeLessThanOrEqual(128);
+    expect(tag).toMatch(/^brain-0\.2\.0-alpha\.483--s[0-9a-f]{12}$/);
+    expect(runtimeImageTag("0.2.0-alpha.483", [...pins].reverse())).toBe(tag);
+  });
+
+  it("spells every tag in what a registry accepts", () => {
+    expect(
+      runtimeImageTag("0.2.0-alpha.1", ["@acme/site_one@1.0.0-rc.1"]),
+    ).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
   });
 });
 
@@ -59,17 +102,34 @@ describe("sitePackagesFor", () => {
       }),
     ).toEqual(["@rizom/site-rizom-ai@0.2.0-alpha.167"]);
   });
+
+  // @brains/* sites ship inside @rizom/brain, pinned by the Brain version.
+  it("excludes a bundled (@brains) site package", () => {
+    expect(sitePackagesFor({ package: "@brains/site-organization" })).toEqual(
+      [],
+    );
+  });
+
+  it("installs only the external theme of a bundled site", () => {
+    expect(
+      sitePackagesFor({
+        package: "@brains/site-organization",
+        theme: "@rizom/theme-rizom-ai",
+        themeVersion: "0.2.0-alpha.235",
+      }),
+    ).toEqual(["@rizom/theme-rizom-ai@0.2.0-alpha.235"]);
+  });
 });
 
 describe("requiredImages", () => {
-  it("derives the declared image set from resolved users", () => {
+  it("derives the declared image set from resolved users: one image per Brain version and site pin set", () => {
     const images = requiredImages([
-      // Two fleet-default users on the pilot version → one shared image.
+      // Two fleet-default users on the pilot version → one shared plain image.
       { brainVersion: "0.2.0-alpha.160" },
       { brainVersion: "0.2.0-alpha.160" },
-      // A cohort running ahead needs its own default image.
+      // A cohort running ahead needs its own plain image.
       { brainVersion: "0.2.0-alpha.167" },
-      // A site override contributes packages to its version's shared image.
+      // A site override needs its own image on its version, with its pins.
       {
         brainVersion: "0.2.0-alpha.167",
         siteOverride: {
@@ -81,7 +141,7 @@ describe("requiredImages", () => {
       },
     ]);
 
-    expect(images).toHaveLength(2);
+    expect(images).toHaveLength(3);
     expect(images.map((image) => image.tag)).toEqual(
       [...images.map((image) => image.tag)].sort(),
     );
@@ -90,13 +150,15 @@ describe("requiredImages", () => {
       {
         tag: "brain-0.2.0-alpha.160",
         brainVersion: "0.2.0-alpha.160",
-        sitePackages: [
-          "@rizom/site-rizom-ai@0.2.0-alpha.167",
-          "@rizom/theme-rizom-ai@0.2.0-alpha.165",
-        ],
+        sitePackages: [],
       },
       {
         tag: "brain-0.2.0-alpha.167",
+        brainVersion: "0.2.0-alpha.167",
+        sitePackages: [],
+      },
+      {
+        tag: "brain-0.2.0-alpha.167--rizom-site-rizom-ai-0.2.0-alpha.167--rizom-theme-rizom-ai-0.2.0-alpha.165",
         brainVersion: "0.2.0-alpha.167",
         sitePackages: [
           "@rizom/site-rizom-ai@0.2.0-alpha.167",
@@ -106,7 +168,7 @@ describe("requiredImages", () => {
     ]);
   });
 
-  it("builds one shared image per version with the union of site packages", () => {
+  it("gives each site its own image on a version, and the plain instances theirs", () => {
     const images = requiredImages([
       { brainVersion: "0.2.0-alpha.350" },
       {
@@ -133,8 +195,20 @@ describe("requiredImages", () => {
       {
         tag: "brain-0.2.0-alpha.350",
         brainVersion: "0.2.0-alpha.350",
+        sitePackages: [],
+      },
+      {
+        tag: "brain-0.2.0-alpha.350--rizom-site-docs-0.2.0-alpha.237--rizom-theme-rizom-ai-0.2.0-alpha.234",
+        brainVersion: "0.2.0-alpha.350",
         sitePackages: [
           "@rizom/site-docs@0.2.0-alpha.237",
+          "@rizom/theme-rizom-ai@0.2.0-alpha.234",
+        ],
+      },
+      {
+        tag: "brain-0.2.0-alpha.350--rizom-site-rizom-ai-0.2.0-alpha.238--rizom-theme-rizom-ai-0.2.0-alpha.234",
+        brainVersion: "0.2.0-alpha.350",
+        sitePackages: [
           "@rizom/site-rizom-ai@0.2.0-alpha.238",
           "@rizom/theme-rizom-ai@0.2.0-alpha.234",
         ],
@@ -142,29 +216,37 @@ describe("requiredImages", () => {
     ]);
   });
 
-  it("rejects conflicting package pins in one shared version image", () => {
-    expect(() =>
-      requiredImages([
-        {
-          brainVersion: "0.2.0-alpha.350",
-          siteOverride: {
-            package: "@rizom/site-docs",
-            version: "0.2.0-alpha.237",
-            theme: "@rizom/theme-rizom-ai",
-            themeVersion: "0.2.0-alpha.234",
-          },
+  it("lets two sites pin a theme differently, each in its own image", () => {
+    const images = requiredImages([
+      {
+        brainVersion: "0.2.0-alpha.350",
+        siteOverride: {
+          package: "@rizom/site-docs",
+          version: "0.2.0-alpha.237",
+          theme: "@rizom/theme-rizom-ai",
+          themeVersion: "0.2.0-alpha.234",
         },
-        {
-          brainVersion: "0.2.0-alpha.350",
-          siteOverride: {
-            package: "@rizom/site-rizom-ai",
-            version: "0.2.0-alpha.238",
-            theme: "@rizom/theme-rizom-ai",
-            themeVersion: "0.2.0-alpha.235",
-          },
+      },
+      {
+        brainVersion: "0.2.0-alpha.350",
+        siteOverride: {
+          package: "@rizom/site-rizom-ai",
+          version: "0.2.0-alpha.238",
+          theme: "@rizom/theme-rizom-ai",
+          themeVersion: "0.2.0-alpha.235",
         },
-      ]),
-    ).toThrow(/conflicting pins.*@rizom\/theme-rizom-ai/i);
+      },
+    ]);
+    expect(images.map((image) => image.sitePackages)).toEqual([
+      [
+        "@rizom/site-docs@0.2.0-alpha.237",
+        "@rizom/theme-rizom-ai@0.2.0-alpha.234",
+      ],
+      [
+        "@rizom/site-rizom-ai@0.2.0-alpha.238",
+        "@rizom/theme-rizom-ai@0.2.0-alpha.235",
+      ],
+    ]);
   });
 
   it("dedupes identical site-override instances into one image", () => {
@@ -254,7 +336,7 @@ describe("resolveImageBuilds", () => {
     expect(builds[0]?.tag).toBe("brain-0.2.0-alpha.169");
   });
 
-  it("forces a single explicit build from dispatch inputs", async () => {
+  it("forces a single explicit build of exactly the dispatched pins", async () => {
     const builds = await resolveImageBuilds({
       users,
       verifyImage: async () => {},
@@ -265,18 +347,39 @@ describe("resolveImageBuilds", () => {
 
     expect(builds).toEqual([
       {
-        tag: "brain-0.2.0-alpha.169",
+        tag: "brain-0.2.0-alpha.169--rizom-theme-rizom-ai-0.2.0-alpha.169",
         brainVersion: "0.2.0-alpha.169",
-        sitePackages: [
-          "@rizom/site-rizom-ai@0.2.0-alpha.167",
-          "@rizom/theme-rizom-ai@0.2.0-alpha.169",
-        ],
+        sitePackages: ["@rizom/theme-rizom-ai@0.2.0-alpha.169"],
       },
     ]);
+  });
+
+  it("rejects dispatched pins that name one package twice", () => {
+    void expect(
+      resolveImageBuilds({
+        users,
+        verifyImage: async () => {},
+        brainVersionInput: "0.2.0-alpha.169",
+        sitePackagesInput:
+          "@rizom/theme-rizom-ai@0.2.0-alpha.169 @rizom/theme-rizom-ai@0.2.0-alpha.168",
+        imageExists: async () => false,
+      }),
+    ).rejects.toThrow(/conflicting pins/);
   });
 });
 
 describe("runResolveMissingImages", () => {
+  async function seedLock(root: string, image: RequiredImage): Promise<void> {
+    await lockRuntimeImage(root, image, async (_command, args, options) => {
+      if (args.includes("--lockfile-only")) {
+        await writeFile(
+          join(options?.cwd ?? root, "bun.lock"),
+          "test-resolver-lock\n",
+        );
+      }
+    });
+  }
+
   async function createPilotRepo(
     files: Record<string, string>,
   ): Promise<string> {
@@ -325,6 +428,17 @@ members:
 `,
     });
 
+    await seedLock(root, {
+      tag: runtimeImageTag("0.2.0-alpha.167", [
+        "@rizom/site-rizom-ai@0.2.0-alpha.167",
+        "@rizom/theme-rizom-ai@0.2.0-alpha.165",
+      ]),
+      brainVersion: "0.2.0-alpha.167",
+      sitePackages: [
+        "@rizom/site-rizom-ai@0.2.0-alpha.167",
+        "@rizom/theme-rizom-ai@0.2.0-alpha.165",
+      ],
+    });
     const outputs: Record<string, string> = {};
     const probed: string[] = [];
     const builds = await runResolveMissingImages({
@@ -362,7 +476,7 @@ members:
       .parse(JSON.parse(outputs["images_json"] ?? "[]"));
     expect(matrix).toEqual([
       {
-        tag: "brain-0.2.0-alpha.167",
+        tag: "brain-0.2.0-alpha.167--rizom-site-rizom-ai-0.2.0-alpha.167--rizom-theme-rizom-ai-0.2.0-alpha.165",
         brain_version: "0.2.0-alpha.167",
         site_packages:
           "@rizom/site-rizom-ai@0.2.0-alpha.167 @rizom/theme-rizom-ai@0.2.0-alpha.165",
@@ -370,7 +484,7 @@ members:
     ]);
   });
 
-  it("includes fleet packages in explicit builds even before any user adopts the version", async () => {
+  it("builds exactly the dispatched pins, before any user adopts the version", async () => {
     const root = await createPilotRepo({
       "pilot.yaml": `brainVersion: 0.2.0-alpha.160
 bundleContract: capability-bundles-v1
@@ -392,30 +506,46 @@ discord:
 `,
       "cohorts/pilot.yaml": "members: [alice]\n",
     });
+    const explicitImage = {
+      tag: runtimeImageTag("0.2.0-alpha.169", [
+        "@rizom/site-rizom-ai@0.2.0-alpha.169",
+      ]),
+      brainVersion: "0.2.0-alpha.169",
+      sitePackages: ["@rizom/site-rizom-ai@0.2.0-alpha.169"],
+    };
     const outputs: Record<string, string> = {};
     const probed: string[] = [];
-    const builds = await runResolveMissingImages({
+    const options = {
       rootDir: root,
       imageRepository: "ghcr.io/rizom-ai/rover-pilot",
       env: {
         BRAIN_VERSION_INPUT: "0.2.0-alpha.169",
         SITE_PACKAGES_INPUT: "@rizom/site-rizom-ai@0.2.0-alpha.169",
       },
-      runCommand: async (command, args) => {
+      runCommand: async (command: string, args: string[]): Promise<void> => {
         probed.push(`${command} ${args.join(" ")}`);
         // The tag is free, reported the way runSubprocess reports it.
         throw new Error(`docker ${args.join(" ")} exited with code 1`);
       },
-      writeOutput: (key, value) => {
+      writeOutput: (key: string, value: string): void => {
         outputs[key] = value;
       },
-      log: () => {},
-    });
+      log: (): void => {},
+    } satisfies Parameters<typeof runResolveMissingImages>[0];
+    await rejects(
+      runResolveMissingImages(options),
+      /Missing or invalid runtime lock/,
+    );
+    expect(outputs).toEqual({});
+    await seedLock(root, explicitImage);
+    probed.length = 0;
+    const builds = await runResolveMissingImages(options);
 
     expect(builds).toHaveLength(1);
-    expect(builds[0]?.tag).toBe("brain-0.2.0-alpha.169");
+    expect(builds[0]?.tag).toBe(
+      "brain-0.2.0-alpha.169--rizom-site-rizom-ai-0.2.0-alpha.169",
+    );
     expect(builds[0]?.sitePackages).toEqual([
-      "@rizom/site-docs@0.2.0-alpha.167",
       "@rizom/site-rizom-ai@0.2.0-alpha.169",
     ]);
     expect(JSON.parse(outputs["images_json"] ?? "[]")).toHaveLength(1);

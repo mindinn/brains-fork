@@ -1,9 +1,11 @@
-import type { IEntityService } from "@brains/entity-service";
+import type { BaseEntity, IEntityService } from "@brains/entity-service";
 import {
   generateMarkdownWithFrontmatter,
   parseMarkdownWithFrontmatter,
 } from "@brains/entity-service";
 import type { TemplateRegistry } from "@brains/templates";
+import { getErrorMessage } from "@brains/utils/error";
+import { computeContentHash } from "@brains/utils/hash";
 import { z } from "@brains/utils/zod";
 
 function targetToEntityId(target: string): string {
@@ -17,12 +19,49 @@ function targetToTitle(target: string): string {
     .join(" ");
 }
 
+const promptFrontmatterSchema = z.record(z.string(), z.unknown());
+
+function parsePrompt(content: string): {
+  body: string;
+  frontmatter: Record<string, unknown>;
+} {
+  const parsed = parseMarkdownWithFrontmatter(content, promptFrontmatterSchema);
+  return { body: parsed.content, frontmatter: parsed.metadata };
+}
+
 /** A prompt entity's body is its markdown with the frontmatter stripped. */
 function promptBody(content: string): string {
-  return parseMarkdownWithFrontmatter(
-    content,
-    z.record(z.string(), z.unknown()),
-  ).content;
+  return parsePrompt(content).body;
+}
+
+/** Bodies compare trimmed: writing frontmatter may add or drop surrounding newlines. */
+function hashPromptBody(body: string): string {
+  return computeContentHash(body.trim());
+}
+
+/** A prompt entity holding a default, stamped with the hash it was written from. */
+function defaultPromptEntity(
+  target: string,
+  fallback: string,
+): {
+  id: string;
+  entityType: "prompt";
+  content: string;
+  metadata: Record<string, unknown>;
+} {
+  const id = targetToEntityId(target);
+  const title = targetToTitle(target);
+  const defaultHash = hashPromptBody(fallback);
+  return {
+    id,
+    entityType: "prompt",
+    content: generateMarkdownWithFrontmatter(fallback, {
+      title,
+      target,
+      defaultHash,
+    }),
+    metadata: { title, target, slug: id, defaultHash },
+  };
 }
 
 /** Read an override without global caches, materialization, or tolerated read errors. */
@@ -35,8 +74,8 @@ export async function readPromptOverride(
   return entity?.content ? promptBody(entity.content) : fallback;
 }
 
-/** Caches resolved prompt bodies and tracks materialization */
-const promptCache = new Map<string, string>();
+/** Targets whose default has been materialized once; bodies are never cached. */
+const materialized = new Set<string>();
 
 /**
  * Resolve a prompt by target name.
@@ -46,7 +85,7 @@ const promptCache = new Map<string, string>();
  * entity from the fallback default (materializing it in DB + on disk via
  * directory-sync auto-export), then returns the fallback.
  *
- * Results are cached — subsequent calls for the same target skip the DB.
+ * Every call reads the entity, so an edited prompt applies to the next call.
  */
 /** The entity reads and writes prompt resolution performs. */
 export type PromptEntityStore = Pick<
@@ -59,9 +98,6 @@ export async function resolvePrompt(
   target: string,
   fallback: string,
 ): Promise<string> {
-  const cached = promptCache.get(target);
-  if (cached !== undefined) return cached;
-
   const entityId = targetToEntityId(target);
 
   let entity;
@@ -71,71 +107,229 @@ export async function resolvePrompt(
       id: entityId,
     });
   } catch {
-    // DB error — return fallback without caching so next call retries
+    // DB error — answer the fallback; the next call reads again
     return fallback;
   }
 
-  if (entity?.content) {
-    const body = promptBody(entity.content);
-    promptCache.set(target, body);
-    return body;
-  }
+  if (entity?.content) return promptBody(entity.content);
+  if (materialized.has(target)) return fallback;
 
   // Entity doesn't exist — materialize the default prompt
-  const title = targetToTitle(target);
-  const content = generateMarkdownWithFrontmatter(fallback, {
-    title,
-    target,
-  });
+  const prompt = defaultPromptEntity(target, fallback);
 
   // Only the write is tolerated, for the case the comment names: the prompt
   // entity type may not be registered yet. Building the content above is ours,
   // and swallowing a fault there would seed the fallback forever without ever
   // saying why.
   try {
-    await entityService.createEntity({
-      entity: {
-        id: entityId,
-        entityType: "prompt",
-        content,
-        metadata: { title, target, slug: entityId },
-      },
-    });
+    await entityService.createEntity({ entity: prompt });
   } catch {
     // Entity type not registered yet — the fallback below still answers.
   }
 
-  promptCache.set(target, fallback);
+  materialized.add(target);
   return fallback;
 }
 
 /**
- * Reset the prompt cache (for testing).
+ * Forget which defaults were materialized (for testing).
  */
-export function resetPromptCache(): void {
-  promptCache.clear();
+export function resetPromptMaterialization(): void {
+  materialized.clear();
+}
+
+/** The template listing prompt materialization reads, keyed as generation looks templates up. */
+export type PromptTemplateSource = Pick<TemplateRegistry, "getAll">;
+
+/** The entity reads and writes keeping prompt copies in step with their defaults performs. */
+export type PromptMaterializationStore = Pick<
+  IEntityService,
+  | "getEntity"
+  | "createEntity"
+  | "updateEntity"
+  | "deleteEntity"
+  | "hasEntityType"
+>;
+
+/** What one boot-time pass did to the prompt copies, by target (removed copies by entity id). */
+export interface PromptMaterializationReport {
+  /** No copy existed; the default was written with its hash. */
+  created: string[];
+  /** The copy was untouched and its default changed; it now holds the new default. */
+  refreshed: string[];
+  /** The copy matches the current default; its hash was recorded. */
+  stamped: string[];
+  /** The copy was edited from a default that has since changed. */
+  staleOverrides: string[];
+  /** The copy predates provenance and differs from the current default. */
+  unverifiedOverrides: string[];
+  /** Copies written under a template's short name, which generation never read. */
+  removedLegacy: string[];
+  failed: Array<{ target: string; error: string }>;
+}
+
+type SyncOutcome = Exclude<
+  keyof PromptMaterializationReport,
+  "removedLegacy" | "failed"
+>;
+
+async function writeDefaultHash(
+  entityService: PromptMaterializationStore,
+  entity: BaseEntity,
+  frontmatter: Record<string, unknown>,
+  body: string,
+  defaultHash: string,
+): Promise<void> {
+  await entityService.updateEntity({
+    entity: {
+      ...entity,
+      content: generateMarkdownWithFrontmatter(body, {
+        ...frontmatter,
+        defaultHash,
+      }),
+      metadata: { ...entity.metadata, defaultHash },
+    },
+  });
 }
 
 /**
- * Materialize prompt entities for every registered template that carries a
- * basePrompt. Returns the number of templates materialized.
+ * Bring one prompt copy in step with its default. An untouched copy follows
+ * the default; an edited one is kept and, once its default moves, reported.
  */
-/** The template listing prompt materialization reads. */
-export type PromptTemplateSource = Pick<TemplateRegistry, "list">;
+async function syncPromptDefault(
+  entityService: PromptMaterializationStore,
+  target: string,
+  fallback: string,
+): Promise<SyncOutcome | undefined> {
+  const entity = await entityService.getEntity({
+    entityType: "prompt",
+    id: targetToEntityId(target),
+  });
+  if (!entity) {
+    await entityService.createEntity({
+      entity: defaultPromptEntity(target, fallback),
+    });
+    materialized.add(target);
+    return "created";
+  }
 
+  const { body, frontmatter } = parsePrompt(entity.content);
+  const defaultHash = hashPromptBody(fallback);
+  const bodyHash = hashPromptBody(body);
+  const recorded =
+    typeof frontmatter["defaultHash"] === "string"
+      ? frontmatter["defaultHash"]
+      : undefined;
+
+  if (bodyHash === defaultHash) {
+    if (recorded === defaultHash) return undefined;
+    await writeDefaultHash(
+      entityService,
+      entity,
+      frontmatter,
+      body,
+      defaultHash,
+    );
+    return "stamped";
+  }
+  if (recorded === undefined) return "unverifiedOverrides";
+  if (recorded === defaultHash) return undefined;
+  if (bodyHash !== recorded) return "staleOverrides";
+
+  await writeDefaultHash(
+    entityService,
+    entity,
+    frontmatter,
+    fallback,
+    defaultHash,
+  );
+  return "refreshed";
+}
+
+/** Delete a copy written under a short name only while it is still the one materialization wrote. */
+async function removeShortNameCopy(
+  entityService: PromptMaterializationStore,
+  id: string,
+  shortName: string,
+): Promise<boolean> {
+  const entity = await entityService.getEntity({ entityType: "prompt", id });
+  if (!entity) return false;
+  if (parsePrompt(entity.content).frontmatter["target"] !== shortName) {
+    return false;
+  }
+  return entityService.deleteEntity({
+    entityType: "prompt",
+    id,
+    options: { expectedContentHash: entity.contentHash },
+  });
+}
+
+/**
+ * Keep a prompt entity for every registered template that carries a
+ * basePrompt, keyed by the registry key generation resolves, and in step with
+ * its default. Each template settles on its own, so one unreadable copy is
+ * reported without holding back the rest.
+ */
 export async function materializePrompts(
   templateRegistry: PromptTemplateSource,
-  entityService: PromptEntityStore,
-): Promise<number> {
-  const promptTemplates = templateRegistry
-    .list()
-    .filter((t): t is typeof t & { basePrompt: string } => !!t.basePrompt);
+  entityService: PromptMaterializationStore,
+): Promise<PromptMaterializationReport> {
+  const report: PromptMaterializationReport = {
+    created: [],
+    refreshed: [],
+    stamped: [],
+    staleOverrides: [],
+    unverifiedOverrides: [],
+    removedLegacy: [],
+    failed: [],
+  };
+  if (!entityService.hasEntityType("prompt")) return report;
 
-  await Promise.all(
-    promptTemplates.map((t) =>
-      resolvePrompt(entityService, t.name, t.basePrompt),
-    ),
+  const defaults = [...templateRegistry.getAll()].flatMap(
+    ([target, template]) =>
+      template.basePrompt
+        ? [{ target, name: template.name, basePrompt: template.basePrompt }]
+        : [],
   );
 
-  return promptTemplates.length;
+  const synced = await Promise.allSettled(
+    defaults.map(({ target, basePrompt }) =>
+      syncPromptDefault(entityService, target, basePrompt),
+    ),
+  );
+  synced.forEach((result, index) => {
+    const target = defaults[index]?.target ?? "";
+    if (result.status === "rejected") {
+      report.failed.push({ target, error: getErrorMessage(result.reason) });
+    } else if (result.value) {
+      report[result.value].push(target);
+    }
+  });
+
+  const readIds = new Set(
+    defaults.map(({ target }) => targetToEntityId(target)),
+  );
+  const shortNames = new Map<string, string>();
+  for (const { target, name } of defaults) {
+    const id = targetToEntityId(name);
+    if (name !== target && !readIds.has(id)) shortNames.set(id, name);
+  }
+  const removed = await Promise.allSettled(
+    [...shortNames].map(([id, name]) =>
+      removeShortNameCopy(entityService, id, name),
+    ),
+  );
+  [...shortNames.entries()].forEach(([id, name], index) => {
+    const result = removed[index];
+    if (result?.status === "rejected") {
+      report.failed.push({
+        target: name,
+        error: getErrorMessage(result.reason),
+      });
+    } else if (result?.value) {
+      report.removedLegacy.push(id);
+    }
+  });
+
+  return report;
 }

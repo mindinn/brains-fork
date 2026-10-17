@@ -1385,7 +1385,7 @@ describe("resolve with site package", () => {
     expect(getConfig(dashboardRoot)["routePath"]).toBe("/");
   });
 
-  test("should inject routes and entityDisplay into site-builder", () => {
+  test("should inject routes into site-builder and the site's entity display into the shell", () => {
     const [siteBuilderFactory] = createMockFactory("site-builder");
     const site = createMockSitePackage("personal-site", {
       routes: [
@@ -1408,7 +1408,8 @@ describe("resolve with site package", () => {
     const sbConfig = getConfig(siteBuilder);
 
     expect(sbConfig["routes"]).toHaveLength(2);
-    expect(sbConfig["entityDisplay"]).toEqual({ post: { label: "Essay" } });
+    // The shell holds the one entity display every reader takes.
+    expect(sbConfig["entityDisplay"]).toBeUndefined();
     expect(config.shellConfig?.entityDisplay).toEqual({
       post: { label: "Essay" },
     });
@@ -1469,7 +1470,7 @@ describe("resolve with site package", () => {
       { id: "home", path: "/", title: "App Home" },
       { id: "archive", path: "/archive", title: "Archive" },
     ]);
-    expect(siteBuilderConfig["entityDisplay"]).toEqual({
+    expect(config.shellConfig?.entityDisplay).toEqual({
       post: { label: "Essay" },
       note: { label: "Note" },
     });
@@ -1568,6 +1569,39 @@ describe("resolve with site package", () => {
     const webserver = config.plugins?.find((p) => p.id === "webserver");
 
     expect(getConfig(webserver)["enablePreview"]).toBe(false);
+  });
+
+  test("should serve production on the port brain.yaml sets", () => {
+    const def = defineBrain({
+      name: "test",
+      version: "1.0.0",
+      capabilities: [],
+      interfaces: [["webserver", MockWebserver, (): PluginConfig => ({})]],
+    });
+
+    const config = resolve(def, {}, { port: 8090 });
+    const webserver = config.plugins?.find((p) => p.id === "webserver");
+
+    expect(getConfig(webserver)["productionPort"]).toBe(8090);
+    expect(config.deployment.ports.production).toBe(8090);
+  });
+
+  test("should let an explicit webserver productionPort win over port", () => {
+    const def = defineBrain({
+      name: "test",
+      version: "1.0.0",
+      capabilities: [],
+      interfaces: [["webserver", MockWebserver, (): PluginConfig => ({})]],
+    });
+
+    const config = resolve(
+      def,
+      {},
+      { port: 8090, plugins: { webserver: { productionPort: 9000 } } },
+    );
+    const webserver = config.plugins?.find((p) => p.id === "webserver");
+
+    expect(getConfig(webserver)["productionPort"]).toBe(9000);
   });
 
   test("should keep entityDisplay in shell config instead of injecting it into studio", () => {

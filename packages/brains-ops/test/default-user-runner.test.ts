@@ -67,6 +67,11 @@ describe("createDefaultUserRunner", () => {
       },
     });
     expect(result.envFile).toContain("CONTENT_REPO=rizom-ai/rizom-ai-content");
+    // The image the instance runs, named by its Brain version and its own
+    // site pins, so a site pin change is a changed config and deploys.
+    expect(result.envFile).toMatch(
+      /^IMAGE_TAG=brain-[^\n]+--rizom-site-rizom-ai-[^\n]+$/m,
+    );
     expect(result.contentRepoFiles?.[0]?.content).not.toContain("kind:");
   });
 
@@ -77,6 +82,28 @@ describe("createDefaultUserRunner", () => {
 
     expect(result.brainYaml).toContain("kind: organization");
     expect(result.brainYaml).not.toContain("kind: professional");
+  });
+
+  it("renders the auth anchor kind from the user override", async () => {
+    const runner = createDefaultUserRunner("thefourth");
+
+    const result = await runner({
+      ...baseUser,
+      profileKind: "organization",
+      anchorKind: "organization",
+    });
+
+    expect(fromYaml(result.brainYaml ?? "")).toMatchObject({
+      anchor: "organization",
+    });
+  });
+
+  it("leaves the auth anchor kind to the runtime default when unset", async () => {
+    const runner = createDefaultUserRunner("rizom-ai");
+
+    const result = await runner({ ...baseUser, profileKind: "organization" });
+
+    expect(fromYaml(result.brainYaml ?? "")).not.toHaveProperty("anchor");
   });
 
   it("renders a hermetic directory-sync performance posture", async () => {

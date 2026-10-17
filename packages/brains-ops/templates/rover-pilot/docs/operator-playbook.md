@@ -19,17 +19,50 @@ The deploy scripts and workflows should read from that contract instead of inven
 
 The fleet has one image topology:
 
-- one immutable `brain-${brainVersion}` image is published for each effective Brain version
-- every new image contains the union of exact site/theme package pins across the whole fleet, regardless of current Brain versions
-- conflicting versions of one package fail image resolution before build
-- generated `users/<handle>/.env` carries `BRAIN_VERSION=<brainVersion>`
+- one immutable image is published for each effective Brain version and site pin set: `brain-${brainVersion}` for instances without a site override, `brain-${brainVersion}--<pins>` for instances with one (pins spelled out and sorted, or a digest when too long)
+- instances with the same version and pins share an image; a site's pin change builds that site's image and no other
+- generated `users/<handle>/.env` carries `BRAIN_VERSION=<brainVersion>`, and `IMAGE_TAG=<tag>` for an instance with site pins
 - build and deploy derive the same effective image tag from the resolved registry
+
+## Reviewed runtime dependencies
+
+Use Bun 1.4.0 to prepare the full dependency graph before building a new image:
+
+```sh
+brains-ops images:lock .
+# Or prepare one version/pin set before promotion:
+brains-ops images:lock . --brain-version <exact-version> --site-packages "<exact site/theme pins>"
+```
+
+Review and commit each new `deploy/runtime/<image-tag>/package.json` and `bun.lock`
+together with its desired-state change. The manifest pins Brain and exactly that
+image's site/theme packages, and overrides `postcss-selector-parser` to 7.1.6.
+Review fresh runtime audit and behavior checks; a frozen lock is not proof that
+bundled code, operating-system packages, or every dependency is vulnerability-free.
+
+The command resolves dependencies with lifecycle scripts disabled; it does not
+build, publish, deploy, decrypt secrets, or inspect fleet hosts. Existing entries
+are validated and left untouched, never refreshed. A failed new entry retains an
+`.incomplete` marker and diagnostic files and blocks reuse; inspect and preserve
+that evidence before separately approving any recovery.
+
+Build refuses missing, incomplete, or mismatched manifests. Docker copies only the
+reviewed manifest and lock for the selected tag and installs production packages
+with `--frozen-lockfile --ignore-scripts`; it never resolves updates with `bun add`.
+Commit both inputs: changing only the manifest without a matching lock fails the
+frozen install before publication.
+
+Existing published tags remain immutable and are not rebuilt by adopting this
+scaffold. Existing-image verification still checks only the exact top-level Brain
+and site/theme versions; it does not certify a legacy image's transitive graph.
+The parser fix reaches running instances only through a separately approved new
+image/version rollout, never by overwriting a deployed tag.
 
 ## Version bump flow
 
-When `pilot.yaml.brainVersion` changes and you push:
+First generate and review the matching runtime locks. When `pilot.yaml.brainVersion` changes and you push:
 
-1. build publishes each missing version image with the full fleet package union, and verifies existing images against their assigned instances
+1. build publishes each missing image, named by Brain version and site pins, and verifies existing images against what their names say they hold
 2. reconcile refreshes generated `users/<handle>/.env`
 3. deploy runs for handles whose generated config changed
 4. generated file commits happen once in a final aggregation step after the deploy matrix finishes
@@ -38,10 +71,10 @@ Every external site and theme package has its own exact version pin. A cohort or
 pilot brain-version bump never changes those package versions implicitly; update each
 pin deliberately from reviewed package and image evidence.
 
-Smoke-first upgrades build the full fleet package union before promotion. Moving
-other cohorts onto the tested Brain version then reuses that same immutable image.
-Explicit Build dispatches also include the fleet union; `site_packages` only adds
-extra pins and cannot replace or conflict with declared pins.
+Smoke-first upgrades build the canary's image, named by its pins, before promotion.
+Moving other instances onto the tested Brain version reuses that image where their
+pins match it and builds their own where they do not. Explicit Build dispatches build
+exactly the dispatched version and `site_packages` pins.
 
 Deploy verifies the actual installed Brain and selected instance's site/theme
 versions on the CI runner after image readiness and before provisioning or
@@ -307,24 +340,22 @@ siteOverride:
   themeVersion: <exact-theme-version>
 ```
 
-Missing external package versions fail desired-state validation. Every instance on one
-Brain version uses the same image and exact package union. Change a site/theme package
-pin only together with a fresh Brain version; published `brain-${brainVersion}` tags
-remain immutable. Conflicting pins for one package on the same Brain version fail before
-build. Bundled `@brains/*` themes omit `themeVersion` because they are not installed as
-separate packages.
+Missing external package versions fail desired-state validation. An instance runs the
+image named by its Brain version and its own pins, so a site/theme pin can change on its
+own: the push builds that image and redeploys that instance. Published tags remain
+immutable; a new pin set is a new tag. Bundled `@brains/*` themes omit `themeVersion`
+because they are not installed as separate packages.
 
 ### Custom-package canary and rollback
 
 1. Confirm the exact site/theme versions are public-installable without npm credentials.
-2. Apply the exact package names and versions to one healthy canonical site canary and select a fresh Brain version for that package set.
-3. Push desired state and let the normal Build → Reconcile → Deploy chain create the shared version image and update the canary.
+2. Apply the exact package names and versions to one healthy canonical site canary.
+3. Push desired state and let the normal Build → Reconcile → Deploy chain create the canary's image and update the canary.
 4. Run `bunx brains-ops verify-user . <handle>`.
 5. Manually verify the site, theme, Studio, content sync, and passkey sign-in before adding more users.
 
-To roll back, remove or change `siteOverride` while selecting a fresh Brain version,
-then reconcile and redeploy that user. Never mutate an existing image tag; coordinate any
-other users intentionally sharing the selected version.
+To roll back, remove or change `siteOverride`, then reconcile and redeploy that user.
+Never mutate an existing image tag.
 
 ## Setup email checklist
 
@@ -346,7 +377,7 @@ Use this for browser/Studio-first users who should receive their own first-passk
    - `bunx brains-ops onboard . <handle>`
    - or `bunx brains-ops reconcile-cohort . <cohort>`
 
-4. Verify the generated `users/<handle>/brain.yaml` contains `auth-service.setupEmail` and `email` interface config.
+4. Verify the generated `users/<handle>/brain.yaml` contains `auth-service.setupEmail` set to the user's address and `email` interface config.
 5. Ask the user to complete passkey setup from the email link, then use:
    - Dashboard: `https://<handle>.rizom.ai/`
    - Studio: `https://<handle>.rizom.ai/studio`
@@ -399,9 +430,11 @@ Notes:
 
 ## Discord application credential checklist
 
-Use this when enabling Discord for a pilot user.
+Discord is optional. Browser chat with passkey setup is the default pilot interface. Use this checklist only when enabling Discord for a user.
 
-1. Pick the user handle (for example `smoke`).
+1. Add the user with Discord enabled:
+   - `bunx brains-ops user:add . <handle> --cohort <cohort> --discord`
+   - Add `--anchor-id <discord-user-id>` if the user should be a Discord anchor. For compatibility, `--anchor-id` also enables Discord when `--discord` is omitted.
 2. Open the Discord Developer Portal.
 3. Create a **new application** for that user's brain.
 4. Add a **Bot** to the application.
@@ -410,7 +443,7 @@ Use this when enabling Discord for a pilot user.
    - `DISCORD_BOT_TOKEN=...`
    - `DISCORD_PUBLIC_KEY=...`
    - `DISCORD_APPLICATION_ID=...`
-7. Keep `discord.enabled: true` in `users/<handle>.yaml` unless you explicitly want to disable the primary pilot interface.
+7. Confirm `users/<handle>.yaml` contains `discord.enabled: true` and its secrets template contains `discordBotToken`.
 8. Encrypt the current per-user credential payload:
    - `bunx brains-ops secrets:encrypt . <handle>`
 9. Reconcile/deploy the user or cohort:
@@ -423,7 +456,7 @@ Notes:
 
 - Use **one Discord application credential set per user/brain**.
 - Do not reuse the same Discord application across multiple pilot users.
-- Discord is the default pilot interface moving forward.
+- Discord-disabled users generate `anchors: []`, no `plugins.discord` block, and require no Discord secret.
 - The encrypted `users/<handle>.secrets.yaml.age` file is the durable checked-in deploy input; your local env is only the operator staging source.
 - Direct MCP client access should use OAuth/passkey-capable clients where possible.
 - When explaining the content workflow, describe it first as a normal **git repo** of **markdown/text files**.

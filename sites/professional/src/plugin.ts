@@ -15,6 +15,7 @@ import {
   loadHomepageOpening,
 } from "@brains/site-atlas";
 import { loadHomepageAtlas } from "./datasources/homepage-atlas";
+import { loadTopicSourceTypes } from "./datasources/topic-source-types";
 import { loadPublicFaqs } from "@brains/faq";
 
 /** The most asked published FAQs the homepage shows under the atlas. */
@@ -24,7 +25,7 @@ import { deckViewSchema } from "@brains/decks";
 import { aboutHighlightsSchema, professionalProfileSchema } from "./schemas";
 import { StructuredContentFormatter } from "@brains/content-formatters";
 import { z } from "@brains/utils/zod";
-import { createTemplate } from "@brains/templates";
+import { createTemplate, renderedLinkFields } from "@brains/templates";
 import { HomepageListDataSource } from "./datasources/homepage-datasource";
 import { AboutDataSource } from "./datasources/about-datasource";
 import {
@@ -106,6 +107,7 @@ export class ProfessionalSitePlugin extends ServicePlugin<
             loadAtlas: (buildContext): ReturnType<typeof loadHomepageAtlas> =>
               loadHomepageAtlas({
                 entityService: buildContext.entityService,
+                sourceTypes: () => loadTopicSourceTypes(context.messaging),
                 semantic: {
                   project: (request) =>
                     buildContext.entityService.projectSemanticSpace(request),
@@ -141,15 +143,9 @@ export class ProfessionalSitePlugin extends ServicePlugin<
       sections: z.record(z.string(), homepageSectionSchema),
     });
 
-    const enrichedLinks = {
-      url: z.string(),
-      typeLabel: z.string(),
-      listUrl: z.string(),
-      listLabel: z.string(),
-    };
     const homepageRenderSchema = homepageListSchema.extend({
-      posts: z.array(blogPostSchema.extend(enrichedLinks)),
-      decks: z.array(deckSchema.extend(enrichedLinks)),
+      posts: z.array(blogPostSchema.extend(renderedLinkFields)),
+      decks: z.array(deckSchema.extend(renderedLinkFields)),
     });
 
     // About page schema
@@ -210,7 +206,9 @@ export class ProfessionalSitePlugin extends ServicePlugin<
 
 Be concrete: name the kind of work they do, the problems they return to, and how they approach them. Do not invent employers, credentials, dates, or achievements that the knowledge does not support. If the knowledge is thin, stay general rather than making things up.
 
-The headline is one sentence of at most 90 characters. The summary is two or three sentences. The themes are two to five short phrases, three words or fewer each, naming recurring threads in their work.`,
+The headline is one sentence of at most 90 characters. The summary is two or three sentences. The themes are two to five short phrases, three words or fewer each, naming recurring threads in their work.
+
+Follow the supplied style guide for voice, tone, wording and form, while keeping the third person.`,
           formatter: new StructuredContentFormatter(aboutHighlightsSchema, {
             title: "About highlights",
             mappings: [

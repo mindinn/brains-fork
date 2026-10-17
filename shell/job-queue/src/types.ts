@@ -32,6 +32,12 @@ export interface JobClaimOptions {
   workerSlotId: string;
   workerSessionId: string;
   leaseDurationMs: number;
+  /**
+   * Called for an expired attempt the claim fails terminally instead of
+   * reclaiming, because its retries are spent. Its handler never ran to the
+   * end, so this is the only place its terminal failure surfaces.
+   */
+  onTerminalReclaim?: ((job: JobInfo) => Promise<void>) | undefined;
 }
 
 type JobInfoSchema = z.ZodObject<{
@@ -133,6 +139,12 @@ export interface JobHandler<
 > extends JobValidator<TInput> {
   /** Per-type execution deadline; falls back to the worker default. */
   readonly executionTimeoutMs?: number | undefined;
+
+  /**
+   * At most one job of this type runs at a time, across every worker: a
+   * second is not claimed while another holds a live lease.
+   */
+  readonly exclusive?: boolean | undefined;
 
   /**
    * Process a job of this type
@@ -262,8 +274,11 @@ export interface IJobQueueService {
   /** Freeze handler declarations before runtime services can admit work. */
   finalizeHandlerRegistrations(): readonly JobExecutionRegistration[];
 
-  /** Read the immutable handler declarations derived during boot. */
-  getExecutionRegistrations(): readonly JobExecutionRegistration[];
+  /**
+   * Read the immutable handler declarations derived during boot; undefined
+   * while plugins are still registering.
+   */
+  getExecutionRegistrations(): readonly JobExecutionRegistration[] | undefined;
 
   /**
    * Enqueue a job for processing

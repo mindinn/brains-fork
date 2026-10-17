@@ -51,6 +51,9 @@ export function createDirectorySyncFacade(
     startWatching: () => getActive().startWatching(),
     stopWatching: () => getActive().stopWatching(),
     suppressWatchPaths: (paths) => getActive().suppressWatchPaths(paths),
+    ignorePulledWatchPaths: (paths, matchesHead) =>
+      getActive().ignorePulledWatchPaths(paths, matchesHead),
+    withoutStoredEchoes: (paths) => getActive().withoutStoredEchoes(paths),
     recordPendingPullDeletes: (paths) =>
       getActive().recordPendingPullDeletes(paths),
     isPendingDelete: (entityType, entityId) =>

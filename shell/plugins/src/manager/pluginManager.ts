@@ -14,32 +14,12 @@ import { PluginError } from "../errors";
 import { PluginLifecycle } from "./plugin-lifecycle";
 import { DependencyResolver } from "./dependency-resolver";
 import { CapabilityRegistrar } from "./capability-registrar";
-import { Effect, Either } from "@brains/utils/effect";
+import { runConcurrentPhase } from "@brains/utils/effect";
 import {
   ProjectionRegistry,
   type ProjectionGraph,
 } from "../entity/projection-registry";
 import type { ProjectionRule } from "../entity/projection-rule";
-
-async function runConcurrentPhase(
-  operations: Array<() => Promise<void>>,
-): Promise<void> {
-  const results = await Effect.runPromise(
-    Effect.all(
-      operations.map((operation) =>
-        Effect.either(
-          Effect.tryPromise({
-            try: operation,
-            catch: (error) => error,
-          }),
-        ),
-      ),
-      { concurrency: "unbounded" },
-    ),
-  );
-  const firstFailure = results.find(Either.isLeft);
-  if (firstFailure) throw firstFailure.left;
-}
 
 // Re-export enums for convenience
 export { PluginEvent, PluginStatus } from "./types";

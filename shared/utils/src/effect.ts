@@ -1,6 +1,6 @@
 // Canonical internal Effect boundary. Keep exports curated so workspace packages
 // do not depend on Effect's broad root surface independently.
-import { Effect, Layer } from "effect";
+import { Clock, Effect, Layer, Result } from "effect";
 import type { Context as EffectContext } from "effect";
 
 export {
@@ -8,7 +8,7 @@ export {
   Clock,
   Context,
   Effect,
-  Either,
+  Result,
   Exit,
   Fiber,
   FiberMap,
@@ -31,14 +31,14 @@ export interface ScopedService<TService> {
  *
  * The shell's service layers all want exactly this: acquire synchronously,
  * close synchronously, hand the tag the service. Building it by hand meant
- * repeating the `Layer.scoped` / `Effect.acquireRelease` / `Effect.sync`
+ * repeating the `Layer.effect` / `Effect.acquireRelease` / `Effect.sync`
  * nesting in each one, where the release step is easy to get subtly wrong.
  */
 export function scopedServiceLayer<TId, TService>(
-  tag: EffectContext.Tag<TId, TService>,
+  tag: EffectContext.Service<TId, TService>,
   acquire: () => ScopedService<TService>,
 ): Layer.Layer<TId> {
-  return Layer.scoped(
+  return Layer.effect(
     tag,
     Effect.acquireRelease(Effect.sync(acquire), (resource) =>
       Effect.sync(() => {
@@ -46,4 +46,36 @@ export function scopedServiceLayer<TId, TService>(
       }),
     ).pipe(Effect.map((resource) => resource.service)),
   );
+}
+
+/** Inject timing without changing an effect's other service requirements. */
+export function withOptionalClock<A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  clock?: Clock.Clock,
+): Effect.Effect<A, E, R> {
+  return clock ? Effect.provideService(effect, Clock.Clock, clock) : effect;
+}
+
+/**
+ * Run sibling Promise operations concurrently, settling every operation before
+ * rethrowing the first failure in declaration order.
+ */
+export async function runConcurrentPhase(
+  operations: ReadonlyArray<() => Promise<void>>,
+): Promise<void> {
+  const results = await Effect.runPromise(
+    Effect.all(
+      operations.map((operation) =>
+        Effect.result(
+          Effect.tryPromise({
+            try: operation,
+            catch: (error) => error,
+          }),
+        ),
+      ),
+      { concurrency: "unbounded" },
+    ),
+  );
+  const firstFailure = results.find(Result.isFailure);
+  if (firstFailure) throw firstFailure.failure;
 }

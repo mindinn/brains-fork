@@ -48,6 +48,7 @@ import type {
   ApplyEntityMutationOnceRequest,
   EntitySearchRequest,
   SearchWithDistancesRequest,
+  NearestToEntityRequest,
   ProjectSemanticSpaceRequest,
   SemanticSpaceProjection,
   CreateEntityRequest,
@@ -71,6 +72,7 @@ import { embeddings } from "./schema/embeddings";
 import type { ProjectionChangedTarget } from "./schema/projection-state";
 import { sql } from "drizzle-orm";
 import { ConsoleLogger, type Logger } from "@brains/utils/logger";
+import { RetryScope } from "@brains/utils/retry-backoff";
 import type { IEmbeddingService } from "./embedding-types";
 import type { IJobQueueService } from "@brains/job-queue";
 import { EmbeddingJobHandler } from "./handlers/embeddingJobHandler";
@@ -131,6 +133,8 @@ export class EntityService implements IEntityService {
   private dbInitPromise: Promise<void> | null = null;
   private readonly groupingReprojection: GroupingReprojection;
   private readonly groupingAbort = new AbortController();
+  /** Background retries of refused embedding enqueues; close() stops them. */
+  private readonly embeddingRetries: RetryScope;
   private entityRegistry: IEntityRegistry;
   private logger: Logger;
   private jobQueueService: IJobQueueService;
@@ -151,6 +155,8 @@ export class EntityService implements IEntityService {
    */
   public close(): void {
     this.groupingAbort.abort(new Error("Entity service is closed"));
+    // Stops every pending retry now; an admitted enqueue settles on its own.
+    void this.embeddingRetries.dispose();
     let firstError: unknown;
     let failed = false;
     try {
@@ -273,6 +279,7 @@ export class EntityService implements IEntityService {
       this.logger = (options.logger ?? ConsoleLogger.getInstance()).child(
         "EntityService",
       );
+      this.embeddingRetries = new RetryScope({ logger: this.logger });
       if (!options.jobQueueService) {
         throw new Error(
           "JobQueueService is required for EntityService initialization",
@@ -317,6 +324,7 @@ export class EntityService implements IEntityService {
         projectionNow: options.projectionNow ?? Date.now,
         embeddingDb: this.embeddingDb,
         embeddingsEnabled,
+        embeddingRetries: this.embeddingRetries,
       });
       this.contentResolver = new ContentResolver(this.logger);
 
@@ -433,6 +441,13 @@ export class EntityService implements IEntityService {
   ): Promise<boolean> {
     await this.initialize();
     return this.projectionStore.isProjectionOwnedEntity(request);
+  }
+
+  public async releaseProjectionOwnership(
+    request: ProjectionOwnedEntityRequest,
+  ): Promise<void> {
+    await this.initialize();
+    await this.projectionStore.releaseProjectionOwnership(request);
   }
 
   public setProjectionWakeup(wakeup: () => Promise<void>): () => void {
@@ -606,6 +621,22 @@ export class EntityService implements IEntityService {
     const result = await this.entityMutations.deleteEntity(request);
     if (result) await this.afterGroupingSourceMutation(request.entityType);
     return result;
+  }
+
+  public async purgeEntityType(entityType: string): Promise<number> {
+    await this.initialize();
+    if (this.entityRegistry.hasEntityType(entityType)) {
+      throw new Error(
+        `${entityType} is a registered entity type; delete its entities instead`,
+      );
+    }
+    const ids = await this.entityQueries.listStoredIds(entityType);
+    return ids.reduce<Promise<number>>(
+      async (count, id) =>
+        (await count) +
+        ((await this.entityMutations.deleteEntity({ entityType, id })) ? 1 : 0),
+      Promise.resolve(0),
+    );
   }
 
   public async upsertEntity<T extends BaseEntity>(
@@ -1040,6 +1071,15 @@ export class EntityService implements IEntityService {
       types: request.types,
       maxDistance: request.maxDistance,
     });
+  }
+
+  public async nearestToEntity(
+    request: NearestToEntityRequest,
+  ): Promise<
+    Array<{ entityId: string; entityType: string; distance: number }>
+  > {
+    await this.initialize();
+    return this.entitySearch.nearestToEntity(request);
   }
 
   public async projectSemanticSpace(

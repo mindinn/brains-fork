@@ -290,72 +290,91 @@ describe("EntityService", (): void => {
     });
   });
 
-  test("ordinary mutations take ownership back from projection outputs", async () => {
-    entityRegistry.registerEntityType(
-      "note",
-      noteSchema,
-      new NoteSerializerAdapter(),
-    );
-    await entityService.initialize();
-    const store = entityService.getProjectionStore();
-    await store.markDirty({
-      sourceType: "document",
-      sourceId: "ownership-source",
-      revision: "ownership-source-hash",
-      operation: "upsert",
-      markedAt: 10,
-    });
-    await store.claimPendingWave({
-      waveId: "ownership-wave",
-      graphFingerprint: "graph-1",
-      startedAt: 20,
-    });
-    await store.putWaveRules("ownership-wave", [
-      { ruleId: "note-summary", targetType: "note", level: 0 },
-    ]);
-    await store.applyRuleResult({
-      waveId: "ownership-wave",
-      ruleId: "note-summary",
-      ruleVersion: "1",
-      inputFingerprint: "ownership-input",
-      writeIntents: [
-        {
-          operation: "upsert",
-          entity: {
-            id: "owned-note",
-            entityType: "note",
-            content: "# Test Note\n\nProjection-owned note",
-            metadata: { tags: [] },
-            visibility: "public",
+  test.each([false, true])(
+    "releases projection ownership through ordinary writes or retired-rule migration (migration=%s)",
+    async (migration) => {
+      entityRegistry.registerEntityType(
+        "note",
+        noteSchema,
+        new NoteSerializerAdapter(),
+      );
+      await entityService.initialize();
+      const store = entityService.getProjectionStore();
+      await store.markDirty({
+        sourceType: "document",
+        sourceId: "ownership-source",
+        revision: "ownership-source-hash",
+        operation: "upsert",
+        markedAt: 10,
+      });
+      await store.claimPendingWave({
+        waveId: "ownership-wave",
+        graphFingerprint: "graph-1",
+        startedAt: 20,
+      });
+      await store.putWaveRules("ownership-wave", [
+        { ruleId: "note-summary", targetType: "note", level: 0 },
+      ]);
+      await store.applyRuleResult({
+        waveId: "ownership-wave",
+        ruleId: "note-summary",
+        ruleVersion: "1",
+        inputFingerprint: "ownership-input",
+        writeIntents: [
+          {
+            operation: "upsert",
+            entity: {
+              id: "owned-note",
+              entityType: "note",
+              content: "# Test Note\n\nProjection-owned note",
+              metadata: { tags: [] },
+              visibility: "public",
+            },
           },
-        },
-      ],
-      completedAt: 30,
-    });
+        ],
+        completedAt: 30,
+      });
 
-    expect(
-      await entityService.isProjectionOwnedEntity({
-        entityType: "note",
-        id: "owned-note",
-      }),
-    ).toBe(true);
+      expect(
+        await entityService.isProjectionOwnedEntity({
+          entityType: "note",
+          id: "owned-note",
+        }),
+      ).toBe(true);
 
-    const updateResult = await entityService.updateEntity({
-      entity: createNote({
-        id: "owned-note",
-        content: "Projection-owned note",
-        metadata: { tags: [] },
-      }),
-    });
-
-    expect(updateResult.skipped).toBe(true);
-    expect(
-      await entityService.isProjectionOwnedEntity({
-        entityType: "note",
-        id: "owned-note",
-      }),
-    ).toBe(false);
-  });
+      if (migration) {
+        const before = await entityService.getEntity({
+          entityType: "note",
+          id: "owned-note",
+        });
+        await entityService.releaseProjectionOwnership({
+          entityType: "note",
+          id: "owned-note",
+        });
+        expect(
+          await entityService.getEntity({
+            entityType: "note",
+            id: "owned-note",
+          }),
+        ).toEqual(before);
+      } else {
+        const updateResult = await entityService.updateEntity({
+          entity: createNote({
+            id: "owned-note",
+            content: "Projection-owned note",
+            metadata: { tags: [] },
+          }),
+        });
+        expect(updateResult.skipped).toBe(true);
+      }
+      expect(
+        await entityService.isProjectionOwnedEntity({
+          entityType: "note",
+          id: "owned-note",
+        }),
+      ).toBe(false);
+    },
+  );
 
   test("checks projection admission only for persisted mutations", async () => {
     entityRegistry.registerEntityType(
@@ -459,6 +478,69 @@ describe("EntityService", (): void => {
     ).find((input) => input.sourceId === entity.id);
 
     expect(after?.generation).toBe(before?.generation);
+  });
+
+  test("skips an update whose expected content hash changes after the read", async () => {
+    entityRegistry.registerEntityType(
+      "note",
+      noteSchema,
+      new NoteSerializerAdapter(),
+    );
+    const entity = createNote({ id: "raced-update", content: "observed" });
+    await entityService.createEntity({ entity });
+    const client = createClient({ url: entityDbUrl });
+    const stored = async (): Promise<Record<string, unknown> | undefined> =>
+      (
+        await client.execute({
+          sql: "SELECT content, contentHash FROM entities WHERE id = ?",
+          args: [entity.id],
+        })
+      ).rows[0];
+    const observedHash = (await stored())?.["contentHash"];
+    if (typeof observedHash !== "string")
+      throw new Error("Missing observed hash");
+    const journaled = (
+      await entityService.getProjectionStore().listPendingInputs()
+    ).find((input) => input.sourceId === entity.id);
+    // Admission runs between the stale-hash read and the write transaction.
+    assertMutationAdmission.mockImplementation(
+      async (input: { operation: string }) => {
+        if (input.operation !== "update") return;
+        await client.execute({
+          sql: "UPDATE entities SET content = ?, contentHash = ? WHERE id = ?",
+          args: ["raced", "raced-hash", entity.id],
+        });
+      },
+    );
+    sendEvent.mockClear();
+    enqueueJob.mockClear();
+
+    try {
+      expect(
+        await entityService.updateEntity({
+          entity: { ...entity, content: "late" },
+          options: { expectedContentHash: observedHash },
+        }),
+      ).toEqual({
+        entityId: entity.id,
+        jobId: "",
+        skipped: true,
+        skipReason: "content-conflict",
+      });
+      expect(await stored()).toEqual({
+        content: "raced",
+        contentHash: "raced-hash",
+      });
+    } finally {
+      client.close();
+    }
+    expect(
+      (await entityService.getProjectionStore().listPendingInputs()).find(
+        (input) => input.sourceId === entity.id,
+      )?.generation,
+    ).toBe(journaled?.generation);
+    expect(sendEvent).not.toHaveBeenCalled();
+    expect(enqueueJob).not.toHaveBeenCalled();
   });
 
   test("rolls back entity persistence when dirty journaling fails", async () => {

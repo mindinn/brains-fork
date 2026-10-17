@@ -1,9 +1,12 @@
 import { describe, it, expect } from "bun:test";
 import {
   slugify,
+  truncateSlug,
   generateIdFromText,
   pluralize,
   toDisplayName,
+  normalizeTag,
+  normalizeTags,
 } from "../src/string-utils";
 
 describe("string-utils", () => {
@@ -48,16 +51,56 @@ describe("string-utils", () => {
       expect(slugify("123-456")).toBe("123-456");
     });
 
-    it("should handle unicode characters", () => {
-      expect(slugify("Café")).toBe("caf");
-      expect(slugify("naïve")).toBe("nave");
+    it("transliterates letters instead of dropping them", () => {
+      expect(slugify("Café")).toBe("cafe");
+      expect(slugify("naïve")).toBe("naive");
+      expect(slugify("décadence")).toBe("decadence");
       expect(slugify("emoji 😀 test")).toBe("emoji-test");
+    });
+
+    it("keeps letters and digits from every script", () => {
+      expect(slugify("創作者商業模式")).toBe("創作者商業模式");
+      expect(slugify("AI知識管理系統")).toBe("ai知識管理系統");
+      expect(slugify("AI 知識管理")).toBe("ai-知識管理");
+      expect(slugify("Привет мир")).toBe("привет-мир");
+      expect(slugify("2026年 計畫")).toBe("2026年-計畫");
+    });
+
+    it("keeps the marks that belong to a word outside Latin script", () => {
+      expect(slugify("がっこう")).toBe("がっこう");
+      expect(slugify("한국어 공부")).toBe("한국어-공부");
+      expect(slugify("हिन्दी")).toBe("हिन्दी");
+    });
+
+    it("folds compatibility forms and drops stray emoji selectors", () => {
+      expect(slugify("ＡＩ　ツール")).toBe("ai-ツール");
+      expect(slugify("I ❤️ tea")).toBe("i-tea");
+      expect(slugify("1️⃣ step")).toBe("1-step");
+    });
+
+    it("writes German umlauts and ß as German does without them", () => {
+      expect(slugify("Übermensch")).toBe("uebermensch");
+      expect(slugify("Glück")).toBe("glueck");
+      expect(slugify("Modernität")).toBe("modernitaet");
+      expect(slugify("Größe")).toBe("groesse");
     });
 
     it("should preserve word boundaries", () => {
       expect(slugify("camelCase")).toBe("camelcase");
       expect(slugify("snake_case")).toBe("snake-case");
       expect(slugify("kebab-case")).toBe("kebab-case");
+    });
+  });
+
+  describe("truncateSlug", () => {
+    it("cuts whole characters, never half of one", () => {
+      expect(truncateSlug("𠀀𠀁𠀂", 2)).toBe("𠀀𠀁");
+      expect(truncateSlug("創作者商業模式", 3)).toBe("創作者");
+    });
+
+    it("leaves no trailing hyphen", () => {
+      expect(truncateSlug("hello-world", 6)).toBe("hello");
+      expect(truncateSlug("short", 10)).toBe("short");
     });
   });
 
@@ -74,12 +117,23 @@ describe("string-utils", () => {
       expect(generateIdFromText("Test", "abc")).toBe("test-abc");
     });
 
-    it("should handle empty slug with timestamp fallback", () => {
+    it("derives a stable id from text that has no slug", () => {
       const id1 = generateIdFromText("!!!");
       expect(id1).toMatch(/^id-[a-z0-9]+$/);
+      expect(generateIdFromText("!!!")).toBe(id1);
+      expect(generateIdFromText("???")).not.toBe(id1);
 
       const id2 = generateIdFromText("", "suffix");
       expect(id2).toMatch(/^id-[a-z0-9]+-suffix$/);
+    });
+
+    // Topic and skill ids are re-derived from their titles on every run; an
+    // id that changes between runs replaces the entity each time.
+    it("derives the same id from the same non-Latin title on every call", () => {
+      expect(generateIdFromText("創作者商業模式")).toBe("創作者商業模式");
+      expect(generateIdFromText("創作者商業模式")).toBe(
+        generateIdFromText("創作者商業模式"),
+      );
     });
 
     it("should handle special characters in text", () => {
@@ -161,6 +215,31 @@ describe("string-utils", () => {
     it("should only pluralize the last word", () => {
       expect(toDisplayName("anchor-profile")).toBe("Anchor Profiles");
       expect(toDisplayName("brain-character")).toBe("Brain Characters");
+    });
+  });
+
+  describe("normalizeTag", () => {
+    it("should trim, lowercase, and hyphenate spaces and underscores", () => {
+      expect(normalizeTag("  Academic Research  ")).toBe("academic-research");
+      expect(normalizeTag("data_analysis")).toBe("data-analysis");
+      expect(normalizeTag("Machine \t Learning")).toBe("machine-learning");
+    });
+
+    it("should keep other punctuation as written", () => {
+      expect(normalizeTag("C++")).toBe("c++");
+      expect(normalizeTag("ai/ml")).toBe("ai/ml");
+    });
+  });
+
+  describe("normalizeTags", () => {
+    it("should dedupe after normalizing, keeping first-seen order", () => {
+      expect(
+        normalizeTags([" Research ", "research", "RESEARCH", "data analysis"]),
+      ).toEqual(["research", "data-analysis"]);
+    });
+
+    it("should drop tags that normalize to an empty string", () => {
+      expect(normalizeTags(["", "   ", "design"])).toEqual(["design"]);
     });
   });
 });

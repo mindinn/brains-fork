@@ -5,10 +5,180 @@ import {
   buildAgentContactCandidates,
   buildEntityMemoryContext,
   buildEntityMemoryRefs,
+  buildRetrievedEntityRefs,
+  confirmationFrom,
   extractToolResults,
+  stepFailures,
+  toolCallArgs,
+  toolResultFrom,
 } from "../src/agent-results";
 
+describe("buildRetrievedEntityRefs", () => {
+  const entity = (id: string): Record<string, unknown> => ({
+    id,
+    entityType: "note",
+    content: "Body",
+  });
+
+  it("records entities that successful reads returned, once each", () => {
+    expect(
+      buildRetrievedEntityRefs([
+        { toolName: "system_get", data: { entity: entity("seed") } },
+        {
+          toolName: "system_search",
+          data: {
+            results: [{ entity: entity("seed") }, { entity: entity("b") }],
+          },
+        },
+      ]),
+    ).toEqual([
+      { entityType: "note", entityId: "seed" },
+      { entityType: "note", entityId: "b" },
+    ]);
+  });
+
+  it("ignores failed reads and non-read tools", () => {
+    expect(
+      buildRetrievedEntityRefs([
+        {
+          toolName: "system_get",
+          error: { code: "not_found", message: "Missing" },
+        },
+        { toolName: "system_create", data: { entityId: "new" } },
+        { toolName: "system_list", data: { entities: [entity("x")] } },
+      ]),
+    ).toEqual([]);
+  });
+});
+
 describe("extractToolResults", () => {
+  it("keeps a rejected SDK attempt visible before a successful repair proposal", () => {
+    const input = {
+      entityType: "note",
+      id: "plan",
+      operation: {
+        kind: "edits",
+        edits: [{ oldText: "old", newText: "new" }],
+        fields: { title: "New" },
+      },
+    };
+    const error = new Error("Invalid tool input: mixed operation branches");
+    const results = extractToolResults([
+      {
+        toolCalls: [
+          {
+            toolCallId: "invalid",
+            toolName: "system_update",
+            input,
+            invalid: true,
+            error,
+          },
+        ],
+        content: [
+          {
+            type: "tool-error",
+            toolCallId: "invalid",
+            toolName: "system_update",
+            input,
+            error,
+          },
+        ],
+        toolResults: [],
+      },
+      {
+        toolCalls: [
+          {
+            toolCallId: "repair",
+            toolName: "system_update",
+            input: {
+              ...input,
+              operation: { kind: "edits", edits: input.operation.edits },
+            },
+          },
+        ],
+        toolResults: [
+          {
+            toolCallId: "repair",
+            toolName: "system_update",
+            output: {
+              needsConfirmation: true,
+              toolName: "system_update",
+              summary: "Update plan?",
+              args: {
+                ...input,
+                operation: { kind: "edits", edits: input.operation.edits },
+                confirmed: true,
+              },
+            },
+          },
+        ],
+      },
+    ]);
+    expect(results.totalToolCalls).toBe(2);
+    expect(results.toolResults).toEqual([
+      {
+        toolName: "system_update",
+        args: input,
+        error: { code: "invalid_tool_call", message: error.message },
+      },
+    ]);
+    expect(results.pendingConfirmations).toHaveLength(1);
+  });
+
+  it("records SDK execution exceptions that are absent from toolResults", () => {
+    const input = { entityType: "note", id: "plan" };
+    const results = extractToolResults([
+      {
+        toolCalls: [{ toolCallId: "failed", toolName: "system_get", input }],
+        content: [
+          {
+            type: "tool-error",
+            toolCallId: "failed",
+            toolName: "system_get",
+            input,
+            error: new Error("Storage unavailable"),
+          },
+        ],
+        toolResults: [],
+      },
+    ]);
+    expect(results.totalToolCalls).toBe(1);
+    expect(results.toolResults).toEqual([
+      {
+        toolName: "system_get",
+        args: input,
+        error: {
+          code: "tool_execution_failed",
+          message: "Storage unavailable",
+        },
+      },
+    ]);
+  });
+
+  it("records malformed JSON calls even without record-shaped arguments", () => {
+    const results = extractToolResults([
+      {
+        toolCalls: [
+          {
+            toolCallId: "malformed",
+            toolName: "system_update",
+            input: "{broken",
+            invalid: true,
+            error: new Error("Invalid JSON"),
+          },
+        ],
+        toolResults: [],
+      },
+    ]);
+    expect(results.totalToolCalls).toBe(1);
+    expect(results.toolResults).toEqual([
+      {
+        toolName: "system_update",
+        error: { code: "invalid_tool_call", message: "Invalid JSON" },
+      },
+    ]);
+  });
+
   it("omits cached duplicate read results from extracted metrics records", () => {
     const results = extractToolResults([
       {
@@ -152,6 +322,606 @@ describe("extractToolResults", () => {
       },
     ]);
   });
+
+  const confirmationOutput = (
+    toolName: string,
+    summary: string,
+  ): Record<string, unknown> => ({
+    needsConfirmation: true,
+    toolName,
+    summary,
+    completionSummary: `${summary} done`,
+    preview: `${summary} preview`,
+    args: { id: "plan", confirmed: true },
+  });
+
+  it("turns a confirmation request into a pending confirmation and its approval card", () => {
+    const results = extractToolResults([
+      {
+        toolCalls: [
+          {
+            toolCallId: "call-1",
+            toolName: "system_delete",
+            input: { id: "plan" },
+          },
+        ],
+        toolResults: [
+          {
+            toolCallId: "call-1",
+            toolName: "system_delete",
+            output: confirmationOutput("system_delete", "Delete plan?"),
+          },
+        ],
+      },
+    ]);
+
+    expect(results.toolResults).toEqual([]);
+    expect(results.pendingConfirmations).toEqual([
+      {
+        id: "approval:call-1",
+        toolCallId: "call-1",
+        toolName: "system_delete",
+        summary: "Delete plan?",
+        completionSummary: "Delete plan? done",
+        preview: "Delete plan? preview",
+        args: { id: "plan", confirmed: true },
+      },
+    ]);
+    expect(results.cards).toEqual([
+      {
+        kind: "tool-approval",
+        id: "approval:call-1",
+        toolCallId: "call-1",
+        toolName: "system_delete",
+        summary: "Delete plan?",
+        completionSummary: "Delete plan? done",
+        preview: "Delete plan? preview",
+        state: "approval-requested",
+        input: { id: "plan" },
+      },
+    ]);
+  });
+
+  it("names an approval without a call id by its tool and the calls made so far", () => {
+    const results = extractToolResults([
+      {
+        toolCalls: [{ toolCallId: "read", toolName: "system_get", input: {} }],
+        toolResults: [
+          {
+            toolCallId: "read",
+            toolName: "system_get",
+            output: { success: true, data: { ok: true } },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          { toolCallId: "", toolName: "system_delete", input: { id: "a" } },
+          { toolCallId: "other", toolName: "system_get", input: {} },
+        ],
+        toolResults: [
+          {
+            toolCallId: "",
+            toolName: "system_delete",
+            output: {
+              needsConfirmation: true,
+              toolName: "system_delete",
+              summary: "Delete a?",
+              args: { id: "a" },
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(results.pendingConfirmations).toEqual([
+      {
+        id: "approval:system_delete:3",
+        toolCallId: "",
+        toolName: "system_delete",
+        summary: "Delete a?",
+        args: { id: "a" },
+      },
+    ]);
+    expect(results.cards).toEqual([
+      {
+        kind: "tool-approval",
+        id: "approval:system_delete:3",
+        toolCallId: "",
+        toolName: "system_delete",
+        summary: "Delete a?",
+        state: "approval-requested",
+      },
+    ]);
+  });
+
+  it("asks once per tool in a step and stops at the step that asked", () => {
+    const results = extractToolResults([
+      {
+        toolCalls: [
+          { toolCallId: "del-1", toolName: "system_delete", input: {} },
+          { toolCallId: "del-2", toolName: "system_delete", input: {} },
+          { toolCallId: "upd-1", toolName: "system_update", input: {} },
+          { toolCallId: "get-1", toolName: "system_get", input: {} },
+        ],
+        toolResults: [
+          {
+            toolCallId: "del-1",
+            toolName: "system_delete",
+            output: confirmationOutput("system_delete", "Delete one?"),
+          },
+          {
+            toolCallId: "del-2",
+            toolName: "system_delete",
+            output: confirmationOutput("system_delete", "Delete two?"),
+          },
+          {
+            toolCallId: "upd-1",
+            toolName: "system_update",
+            output: confirmationOutput("system_update", "Update?"),
+          },
+          {
+            toolCallId: "get-1",
+            toolName: "system_get",
+            output: { success: true, data: { ok: true } },
+          },
+        ],
+      },
+      {
+        toolCalls: [{ toolCallId: "late", toolName: "system_get", input: {} }],
+        toolResults: [
+          {
+            toolCallId: "late",
+            toolName: "system_get",
+            output: { success: true, data: { late: true } },
+          },
+        ],
+      },
+    ]);
+
+    expect(
+      results.pendingConfirmations.map((confirmation) => confirmation.id),
+    ).toEqual(["approval:del-1", "approval:upd-1"]);
+    expect(results.cards.map((card) => card.id)).toEqual([
+      "approval:del-1",
+      "approval:upd-1",
+    ]);
+    expect(results.toolResults).toEqual([
+      { toolName: "system_get", args: {}, data: { ok: true } },
+    ]);
+    expect(results.totalToolCalls).toBe(4);
+  });
+
+  it("records a failed call once, however many ways the SDK reports it", () => {
+    const error = new Error("boom");
+    const results = extractToolResults([
+      {
+        toolCalls: [
+          {
+            toolCallId: "bad",
+            toolName: "system_get",
+            input: { id: "x" },
+            error,
+          },
+          { toolCallId: "thrown", toolName: "system_get", input: "raw" },
+        ],
+        content: [
+          { type: "text" },
+          {
+            type: "tool-error",
+            toolCallId: "bad",
+            toolName: "system_get",
+            input: { id: "x" },
+            error,
+          },
+          {
+            type: "tool-error",
+            toolCallId: "thrown",
+            toolName: "system_get",
+            input: "raw",
+            error: "string failure",
+          },
+          {
+            type: "tool-error",
+            toolCallId: "thrown",
+            toolName: "system_get",
+            input: "raw",
+            error: "again",
+          },
+        ],
+        toolResults: [
+          {
+            toolCallId: "bad",
+            toolName: "system_get",
+            output: { success: true, data: { ok: true } },
+          },
+        ],
+      },
+    ]);
+
+    expect(results.toolResults).toEqual([
+      {
+        toolName: "system_get",
+        args: { id: "x" },
+        error: { code: "invalid_tool_call", message: "boom" },
+      },
+      {
+        toolName: "system_get",
+        error: {
+          code: "tool_execution_failed",
+          message: "Tool execution failed",
+        },
+      },
+    ]);
+  });
+
+  it("skips null outputs and keeps unrecognized outputs by tool name only", () => {
+    const results = extractToolResults([
+      {
+        toolCalls: [
+          { toolCallId: "nil", toolName: "system_get", input: { id: "a" } },
+          { toolCallId: "odd", toolName: "system_get", input: { id: "b" } },
+        ],
+        toolResults: [
+          { toolCallId: "nil", toolName: "system_get", output: null },
+          {
+            toolCallId: "odd",
+            toolName: "system_get",
+            output: "plain text",
+          },
+        ],
+      },
+    ]);
+
+    expect(results.toolResults).toEqual([{ toolName: "system_get" }]);
+  });
+
+  it("keeps a successful result's job and its attachment card in order", () => {
+    const results = extractToolResults([
+      {
+        toolCalls: [
+          {
+            toolCallId: "img",
+            toolName: "image_generate",
+            input: { prompt: "a fox" },
+          },
+          {
+            toolCallId: "plain",
+            toolName: "system_get",
+            input: { id: "x" },
+          },
+        ],
+        toolResults: [
+          {
+            toolCallId: "img",
+            toolName: "image_generate",
+            output: {
+              success: true,
+              data: {
+                jobId: "job-1",
+                entityId: "fox",
+                attachment: {
+                  mediaType: "image/png",
+                  url: "/a/fox.png",
+                },
+              },
+            },
+          },
+          {
+            toolCallId: "plain",
+            toolName: "system_get",
+            output: { success: true, data: { ok: true } },
+          },
+        ],
+      },
+    ]);
+
+    expect(results.toolResults).toEqual([
+      {
+        toolName: "image_generate",
+        args: { prompt: "a fox" },
+        jobId: "job-1",
+        data: {
+          jobId: "job-1",
+          entityId: "fox",
+          attachment: { mediaType: "image/png", url: "/a/fox.png" },
+        },
+      },
+      { toolName: "system_get", args: { id: "x" }, data: { ok: true } },
+    ]);
+    expect(results.cards).toEqual([
+      {
+        kind: "attachment",
+        id: "attachment:fox",
+        jobId: "job-1",
+        title: "Generated image",
+        description:
+          "image generation has been queued. This artifact will open once the job completes.",
+        attachment: { mediaType: "image/png", url: "/a/fox.png" },
+      },
+    ]);
+  });
+});
+
+describe("a step's tool-call arguments", () => {
+  it("are the record-shaped inputs of calls that carry an id", () => {
+    const args = toolCallArgs({
+      toolCalls: [
+        { toolCallId: "a", toolName: "system_get", input: { id: "x" } },
+        { toolCallId: "", toolName: "system_get", input: { id: "y" } },
+        { toolCallId: "b", toolName: "system_get", input: "{broken" },
+        { toolCallId: "c", toolName: "system_get", input: {} },
+      ],
+      toolResults: [],
+    });
+
+    expect([...args]).toEqual([
+      ["a", { id: "x" }],
+      ["c", {}],
+    ]);
+  });
+});
+
+describe("a step's failures", () => {
+  it("are rejected calls, then execution errors, each call once", () => {
+    const error = new Error("rejected");
+    const step = {
+      toolCalls: [
+        {
+          toolCallId: "invalid",
+          toolName: "system_update",
+          input: { id: "a" },
+          invalid: true,
+        },
+        { toolCallId: "ok", toolName: "system_get", input: { id: "b" } },
+        {
+          toolCallId: "errored",
+          toolName: "system_get",
+          input: { id: "c" },
+          error,
+        },
+      ],
+      content: [
+        {
+          type: "tool-error",
+          toolCallId: "invalid",
+          toolName: "system_update",
+          input: { id: "a" },
+          error,
+        },
+        {
+          type: "tool-error",
+          toolCallId: "thrown",
+          toolName: "system_get",
+          input: "raw",
+          error: new Error("Storage unavailable"),
+        },
+        {
+          type: "tool-error",
+          toolCallId: "thrown",
+          toolName: "system_get",
+          input: "raw",
+          error: new Error("again"),
+        },
+        { type: "tool-error", toolCallId: "partial" },
+      ],
+      toolResults: [],
+    };
+
+    const failures = stepFailures(
+      step,
+      new Map([
+        ["invalid", { id: "a" }],
+        ["thrown", { from: "call" }],
+      ]),
+    );
+
+    expect([...failures.callIds]).toEqual(["invalid", "errored", "thrown"]);
+    expect(failures.results).toEqual([
+      {
+        toolName: "system_update",
+        args: { id: "a" },
+        error: {
+          code: "invalid_tool_call",
+          message: "SDK rejected the tool call",
+        },
+      },
+      {
+        toolName: "system_get",
+        error: { code: "invalid_tool_call", message: "rejected" },
+      },
+      {
+        toolName: "system_get",
+        args: { from: "call" },
+        error: {
+          code: "tool_execution_failed",
+          message: "Storage unavailable",
+        },
+      },
+    ]);
+  });
+
+  it("are none for a step whose calls all ran", () => {
+    const failures = stepFailures(
+      {
+        toolCalls: [{ toolCallId: "ok", toolName: "system_get", input: {} }],
+        toolResults: [],
+      },
+      new Map(),
+    );
+
+    expect(failures.results).toEqual([]);
+    expect(failures.callIds.size).toBe(0);
+  });
+});
+
+describe("a confirmation request", () => {
+  it("becomes a pending confirmation and an approval card from the same fields", () => {
+    const requested = confirmationFrom({
+      toolResult: {
+        toolCallId: "call-1",
+        toolName: "system_delete",
+        output: {
+          needsConfirmation: true,
+          toolName: "system_delete",
+          summary: "Delete plan?",
+          completionSummary: "Deleted plan",
+          preview: "plan.md",
+          args: { id: "plan", confirmed: true },
+        },
+      },
+      args: { id: "plan" },
+      toolCallsSoFar: 4,
+    });
+
+    expect(requested).toEqual({
+      confirmation: {
+        id: "approval:call-1",
+        toolCallId: "call-1",
+        toolName: "system_delete",
+        summary: "Delete plan?",
+        completionSummary: "Deleted plan",
+        preview: "plan.md",
+        args: { id: "plan", confirmed: true },
+      },
+      card: {
+        kind: "tool-approval",
+        id: "approval:call-1",
+        toolCallId: "call-1",
+        toolName: "system_delete",
+        summary: "Delete plan?",
+        completionSummary: "Deleted plan",
+        preview: "plan.md",
+        state: "approval-requested",
+        input: { id: "plan" },
+      },
+    });
+  });
+
+  it("is named by its tool and the calls so far when it has no call id", () => {
+    const requested = confirmationFrom({
+      toolResult: {
+        toolCallId: "",
+        toolName: "system_delete",
+        output: {
+          needsConfirmation: true,
+          toolName: "system_delete",
+          summary: "Delete?",
+          args: {},
+        },
+      },
+      args: undefined,
+      toolCallsSoFar: 4,
+    });
+
+    expect(requested?.confirmation.id).toBe("approval:system_delete:4");
+    expect(requested?.card).toEqual({
+      kind: "tool-approval",
+      id: "approval:system_delete:4",
+      toolCallId: "",
+      toolName: "system_delete",
+      summary: "Delete?",
+      state: "approval-requested",
+    });
+  });
+
+  it("is absent from an output that does not ask", () => {
+    expect(
+      confirmationFrom({
+        toolResult: {
+          toolCallId: "call-1",
+          toolName: "system_get",
+          output: { success: true, data: {} },
+        },
+        args: undefined,
+        toolCallsSoFar: 1,
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("a tool's result", () => {
+  const resultFrom = (
+    output: unknown,
+    args?: Record<string, unknown>,
+  ): ReturnType<typeof toolResultFrom> =>
+    toolResultFrom({
+      toolResult: { toolCallId: "call-1", toolName: "system_get", output },
+      args,
+      links: undefined,
+    });
+
+  it("keeps an unrecognized output by its tool name only", () => {
+    expect(resultFrom("plain text", { id: "x" })).toEqual({
+      result: { toolName: "system_get" },
+      cards: [],
+      sources: [],
+    });
+  });
+
+  it("is absent for a cached repeat", () => {
+    expect(
+      resultFrom({ success: true, cached: true, data: { ok: true } }),
+    ).toBeUndefined();
+  });
+
+  it("carries a tool error with its code", () => {
+    expect(
+      resultFrom(
+        { success: false, error: "Missing", code: "not_found" },
+        { id: "x" },
+      ),
+    ).toEqual({
+      result: {
+        toolName: "system_get",
+        args: { id: "x" },
+        error: { message: "Missing", code: "not_found" },
+      },
+      cards: [],
+      sources: [],
+    });
+  });
+
+  it("carries data, its job, its cards, and its sources", () => {
+    const card = {
+      kind: "actions",
+      id: "actions:1",
+      title: "Next",
+      actions: [{ type: "event", id: "a:1", label: "Go", event: "GO" }],
+    };
+    const outcome = resultFrom({
+      success: true,
+      data: {
+        jobId: "job-1",
+        entityId: "fox",
+        attachment: { mediaType: "image/png", url: "/a/fox.png" },
+        entity: { id: "fox", entityType: "image", metadata: {} },
+        cards: [card],
+      },
+    });
+
+    expect(outcome?.result.jobId).toBe("job-1");
+    expect(outcome?.result.data).toEqual(
+      expect.objectContaining({ entityId: "fox" }),
+    );
+    expect(outcome?.cards.map((each) => each.id)).toEqual([
+      "actions:1",
+      "attachment:fox",
+    ]);
+    expect(outcome?.sources).toEqual([
+      expect.objectContaining({
+        citation: expect.objectContaining({ entityId: "fox" }),
+      }),
+    ]);
+  });
+
+  it("has no data when a success carries none", () => {
+    expect(resultFrom({ success: true }, { id: "x" })).toEqual({
+      result: { toolName: "system_get", args: { id: "x" } },
+      cards: [],
+      sources: [],
+    });
+  });
 });
 
 describe("an answer's sources", () => {
@@ -234,6 +1004,55 @@ describe("an answer's sources", () => {
       "post:read-directly",
     ]);
     expect(sourceIds()).toEqual(sourceIds("A general answer."));
+  });
+
+  it("keep the sources a tool attributes itself, with their brains", () => {
+    const cards = extractToolResults(
+      [
+        {
+          toolCalls: [{ toolCallId: "n", toolName: "network_ask", input: {} }],
+          toolResults: [
+            {
+              toolCallId: "n",
+              toolName: "network_ask",
+              output: {
+                success: true,
+                data: {
+                  answers: [],
+                  sources: [
+                    {
+                      id: "agent:jo.example",
+                      title: "Jo",
+                      source: "agent",
+                      url: "https://jo.example",
+                      brain: { name: "Jo", url: "https://jo.example" },
+                    },
+                    { title: "not a citation" },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      ],
+      "Jo says to start with the soil.",
+    ).cards;
+    expect(cards).toEqual([
+      {
+        kind: "sources",
+        id: "sources:tool-results",
+        title: "Retrieved sources",
+        sources: [
+          {
+            id: "agent:jo.example",
+            title: "Jo",
+            source: "agent",
+            url: "https://jo.example",
+            brain: { name: "Jo", url: "https://jo.example" },
+          },
+        ],
+      },
+    ]);
   });
 });
 
@@ -506,5 +1325,91 @@ describe("buildEntityMemoryContext", () => {
       "entityType: post; entityId: ai-and-knowledge-work",
     );
     expect(context).not.toContain("Entities listed this turn");
+  });
+});
+
+describe("a retrieved source as the site shows it", () => {
+  const search = (
+    entity: Record<string, unknown>,
+  ): Parameters<typeof extractToolResults>[0] => [
+    {
+      toolCalls: [{ toolCallId: "s", toolName: "system_search", input: {} }],
+      toolResults: [
+        {
+          toolCallId: "s",
+          toolName: "system_search",
+          output: {
+            success: true,
+            data: { results: [{ entity, score: 0.8 }] },
+          },
+        },
+      ],
+    },
+  ];
+  const links = {
+    isCitable: (entityType: string): boolean => entityType === "book-section",
+    urlFor: (_entityType: string, slug: string): string => `/books/${slug}`,
+    siteBaseUrl: "friedrich.rizom.ai",
+  };
+  const sourcesOf = (
+    entity: Record<string, unknown>,
+  ): Array<{ title?: string | undefined; url?: string | undefined }> =>
+    extractToolResults(search(entity), undefined, links).cards.flatMap(
+      (card) => (card.kind === "sources" ? card.sources : []),
+    );
+
+  it("cites a section by the name its page carries, linked to that page", () => {
+    expect(
+      sourcesOf({
+        id: "ecce-homo:00006-warum-ich-so-weise-bin:00008-3",
+        entityType: "book-section",
+        metadata: { title: "3", pageTitle: "EH-Weise-3", slug: "ecce-homo/8" },
+      }),
+    ).toMatchObject([
+      {
+        title: "EH-Weise-3",
+        url: "https://friedrich.rizom.ai/books/ecce-homo/8",
+      },
+    ]);
+  });
+
+  it("does not link a type the site does not cite", () => {
+    const [source] = sourcesOf({
+      id: "ecce-homo",
+      entityType: "book",
+      metadata: { title: "Ecce homo", slug: "ecce-homo" },
+    });
+    expect(source?.title).toBe("Ecce homo");
+    expect(source?.url).toBeUndefined();
+  });
+});
+
+describe("a source's excerpt", () => {
+  it("is the text of a source read directly, without its frontmatter", () => {
+    const [source] = extractToolResults([
+      {
+        toolCalls: [{ toolCallId: "g", toolName: "system_get", input: {} }],
+        toolResults: [
+          {
+            toolCallId: "g",
+            toolName: "system_get",
+            output: {
+              success: true,
+              data: {
+                entity: {
+                  id: "ecce-homo:00046-also-sprach-zarathustra:00051-6",
+                  entityType: "book-section",
+                  content:
+                    "---\ntitle: '6'\nbook: ecce-homo\nsection: EH-ZA-6\n---\nDer Text des Abschnitts.",
+                  metadata: { title: "6", pageTitle: "EH-ZA-6" },
+                },
+              },
+            },
+          },
+        ],
+      },
+    ]).cards.flatMap((card) => (card.kind === "sources" ? card.sources : []));
+
+    expect(source?.excerpt).toBe("Der Text des Abschnitts.");
   });
 });

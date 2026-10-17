@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { sql } from "drizzle-orm";
 import { ProjectionBatchFencedError, ProjectionStore } from "../src";
-import { retrySqliteWrite } from "../src/projection-store";
 import { createEntityDatabase } from "../src/db";
 import { entities } from "../src/schema/entities";
 import { entityExportIntents } from "../src/schema/entity-export-state";
@@ -520,34 +519,6 @@ describe("ProjectionStore", () => {
     }
   });
 
-  it("retries nested transient SQLite write conflicts within budget", async () => {
-    let attempts = 0;
-    let elapsedMs = 0;
-    const result = await retrySqliteWrite(
-      async (): Promise<string> => {
-        attempts += 1;
-        if (attempts < 3) {
-          const busy = Object.assign(new Error("database is locked"), {
-            code: "SQLITE_BUSY",
-          });
-          throw new Error("Failed query", { cause: busy });
-        }
-        return "completed";
-      },
-      {
-        retryBudgetMs: 100,
-        now: () => elapsedMs,
-        sleep: async (delayMs): Promise<void> => {
-          elapsedMs += delayMs;
-        },
-        random: () => 0,
-      },
-    );
-
-    expect(result).toBe("completed");
-    expect(attempts).toBe(3);
-  });
-
   it("leaves a live durable root read-only during recovery", async () => {
     await store.prepareDurableBulkMutation({
       source: "directory-sync",
@@ -874,6 +845,33 @@ describe("ProjectionStore", () => {
         markedAt: 40,
       }),
     ]);
+  });
+
+  it("claims and requeues a wave larger than one statement can bind", async () => {
+    // A corpus migration marks every entity twice: its old id deleted and its
+    // new one written. Six columns a row, 7,462 rows outgrow SQLite's 32,766
+    // bound variables for one statement.
+    const inputs = 7462;
+    await connection.db.run(sql`
+      INSERT INTO projection_dirty_inputs
+        (source_type, source_id, revision, operation, marked_at)
+      WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${inputs})
+      SELECT 'book-section', 'section-' || i, 'rev-' || i, 'upsert', 10 FROM n
+    `);
+
+    const wave = await store.claimPendingWave({
+      waveId: "wave-large",
+      graphFingerprint: "graph-1",
+      startedAt: 20,
+    });
+
+    expect(wave?.id).toBe("wave-large");
+    expect(await store.listWaveInputs("wave-large")).toHaveLength(inputs);
+    expect(await store.listPendingInputs()).toHaveLength(0);
+
+    await store.failWave("wave-large", 30);
+
+    expect(await store.listPendingInputs()).toHaveLength(inputs);
   });
 
   it("persists idempotent incidents, bounds details, and resolves by coverage", async () => {

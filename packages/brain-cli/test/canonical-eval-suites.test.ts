@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { App, resolveBundleSelection } from "@brains/app";
-import { caughtError } from "@brains/test-utils";
+import { caughtError, waitUntil } from "@brains/test-utils";
 import {
   EvalHandlerRegistry,
   resolveEvalSelection,
@@ -28,6 +28,26 @@ import { canonicalBundles } from "../src/model/canonical-bundles";
 import { canonicalBrain } from "../src/model/canonical-brain";
 
 const manifestPath = join(import.meta.dir, "..", "brain.eval.yaml");
+
+const STARTUP_IMPORT_JOB = "directory-sync:directory-import";
+
+/**
+ * Boot, then let the queued startup import finish. The eval runner drains every
+ * job, but here embedding and topic jobs call the AI provider with a
+ * placeholder key: they only fail, and waiting on them ties these tests to
+ * network latency and machine load. The assertions need the imported entities.
+ */
+async function initializeImported(app: App): Promise<void> {
+  await app.initialize();
+  const jobs = app.getShell().getJobQueueService();
+  await waitUntil(
+    async () =>
+      (await jobs.getRecentJobs([STARTUP_IMPORT_JOB], 1)).length > 0 &&
+      (await jobs.getActiveJobs([STARTUP_IMPORT_JOB])).length === 0,
+    "the startup import to finish",
+    { timeoutMs: 60_000, intervalMs: 50 },
+  );
+}
 const packageDirectory = join(import.meta.dir, "..");
 const testCasesDirectory = join(packageDirectory, "test-cases");
 // Loose: resolveEvalSelection reads manifest keys beyond the ones asserted here.
@@ -65,8 +85,8 @@ const expectedMembers: Record<SuiteName, string> = {
 };
 const expectedCaseCounts: Record<SuiteName, number> = {
   headless: 19,
-  personal: 26,
-  professional: 85,
+  personal: 27,
+  professional: 87,
   team: 38,
 };
 const tempDirectories: string[] = [];
@@ -250,7 +270,7 @@ describe("canonical eval recipe ladder", () => {
       directory: testCasesDirectory,
       recursive: true,
     }).loadTestCases();
-    expect(testCases.length).toBe(202);
+    expect(testCases.length).toBe(205);
     for (const testCase of testCases) {
       expect(
         testCase.tags?.filter(
@@ -271,7 +291,7 @@ describe("canonical eval recipe ladder", () => {
         seedDirectory,
       );
       try {
-        await app.initialize();
+        await initializeImported(app);
         const shell = app.getShell();
         const entityService = shell.getEntityService();
         for (const entityType of seededEntityTypes(seedDirectory)) {
@@ -350,6 +370,65 @@ describe("canonical eval recipe ladder", () => {
     }
   }, 120_000);
 
+  test("the onboarding playbook's anchor-profile shape is a valid profile", async () => {
+    // The playbook tells the model exactly which frontmatter to write; if that
+    // shape and the profile schema drift apart, every onboarding save fails.
+    const selection = suiteSelection("professional");
+    const { app } = createSuiteApp(
+      "professional",
+      selection,
+      seedContentPath(selection),
+    );
+    try {
+      await initializeImported(app);
+      const service = app.getShell().getEntityService();
+      const playbookRequest = {
+        entityType: "playbook",
+        id: "onboarding",
+        visibilityScope: internalFullScope("onboarding playbook shape check"),
+      };
+      // Onboarding seeds its playbook once startup content settles, after the
+      // import job has finished.
+      await waitUntil(
+        async () => (await service.getEntity(playbookRequest)) !== null,
+        "the onboarding playbook to be seeded",
+        { timeoutMs: 60_000, intervalMs: 50 },
+      );
+      const playbook = await service.getEntity(playbookRequest);
+      if (!playbook) throw new Error("Missing onboarding playbook");
+      const instruction = playbook.content
+        .split("\n")
+        .find((line) =>
+          line.includes("Use this exact frontmatter shape for anchor-profile"),
+        );
+      if (!instruction) throw new Error("Missing anchor-profile shape");
+      const keys = [...instruction.matchAll(/`([a-z]+):(?: [^`]*)?`/g)].map(
+        (match) => match[1] ?? "",
+      );
+      expect(keys).toContain("name");
+      const markdown = [
+        "---",
+        ...keys.map((key) =>
+          key === "expertise"
+            ? "expertise:\n  - resilient software"
+            : `${key}: sample`,
+        ),
+        "---",
+        "",
+      ].join("\n");
+      const profile = await service.getEntity({
+        entityType: "anchor-profile",
+        id: "anchor-profile",
+        visibilityScope: internalFullScope("onboarding playbook shape check"),
+      });
+      if (!profile) throw new Error("Missing anchor profile");
+      // The same save system_update performs when the operator approves.
+      await service.updateEntity({ entity: { ...profile, content: markdown } });
+    } finally {
+      await app.stop();
+    }
+  }, 120_000);
+
   test.each(["content", "edits"])(
     "persists a note title/body %s update exactly after approval",
     async (mode) => {
@@ -360,7 +439,7 @@ describe("canonical eval recipe ladder", () => {
         seedContentPath(selection),
       );
       try {
-        await app.initialize();
+        await initializeImported(app);
         const shell = app.getShell();
         const service = shell.getEntityService();
         const id = "long-note-update-title-and-body";
@@ -383,17 +462,19 @@ describe("canonical eval recipe ladder", () => {
           {
             entityType: "note",
             id,
-            ...(mode === "content"
-              ? { content: expected }
-              : {
-                  edits: [
-                    { oldText: "# Working Plan", newText: "# Approved Plan" },
-                    {
-                      oldText: "Review cadence: monthly.",
-                      newText: "Review cadence: weekly.",
-                    },
-                  ],
-                }),
+            operation:
+              mode === "content"
+                ? { kind: "content", content: expected }
+                : {
+                    kind: "edits",
+                    edits: [
+                      { oldText: "# Working Plan", newText: "# Approved Plan" },
+                      {
+                        oldText: "Review cadence: monthly.",
+                        newText: "Review cadence: weekly.",
+                      },
+                    ],
+                  },
           },
           context,
         );
@@ -443,7 +524,7 @@ describe("canonical eval recipe ladder", () => {
     );
     expect(Buffer.byteLength(content)).toBe(17_000);
     try {
-      await app.initialize();
+      await initializeImported(app);
       const shell = app.getShell();
       const conversations = shell.getConversationService();
       const conversationId = await conversations.startConversation({
@@ -524,6 +605,126 @@ describe("canonical eval recipe ladder", () => {
     }
   }, 120_000);
 
+  test("replaces a note body from a user-message source under its stored frontmatter", async () => {
+    const selection = suiteSelection("personal");
+    const { app } = createSuiteApp(
+      "personal",
+      selection,
+      seedContentPath(selection),
+    );
+    const testCase = await YAMLLoader.createFresh({
+      directory: testCasesDirectory,
+    }).loadTestCase(
+      join(testCasesDirectory, "personal/multi-turn/mcp-verbatim-update.yaml"),
+    );
+    if (testCase.type !== "multi_turn")
+      throw new Error("Expected multi-turn eval");
+    const request = testCase.turns[0]?.userMessage;
+    if (!request) throw new Error("Missing source request");
+    const startAfter = "BEGIN EXACT CONTENT";
+    const endBefore = "END EXACT CONTENT";
+    const content = request.slice(
+      request.indexOf(`${startAfter}\n`) + startAfter.length + 1,
+      request.lastIndexOf(endBefore),
+    );
+    // Seeding stores canonical Markdown, without the fixture's blank line
+    // after frontmatter.
+    const original = readFileSync(
+      join(
+        packageDirectory,
+        "eval-content/recipes/personal/mcp-verbatim-update.md",
+      ),
+      "utf8",
+    ).replace("---\n\n", "---\n");
+    try {
+      await initializeImported(app);
+      const shell = app.getShell();
+      const conversations = shell.getConversationService();
+      const conversationId = await conversations.startConversation({
+        sessionId: "verbatim-update-regression",
+        channelId: "verbatim-update-regression",
+        interfaceType: "mcp",
+        metadata: {
+          channelName: "Verbatim update regression",
+          interfaceType: "mcp",
+          channelId: "verbatim-update-regression",
+        },
+      });
+      await conversations.addMessage({
+        conversationId,
+        role: "user",
+        content: request,
+        metadata: { userPermissionLevel: "admin" },
+      });
+      const tool = shell
+        .getMCPService()
+        .listAgentToolsForPermissionLevel("admin")
+        .find((entry) => entry.tool.name === "system_update")?.tool;
+      if (!tool) throw new Error("Missing update tool");
+      const context = {
+        interfaceType: "mcp",
+        userPermissionLevel: "admin",
+        actor: { kind: "user", userId: "verbatim-update-regression" },
+        conversationId,
+      } as const;
+      const entityRef = {
+        entityType: "note",
+        id: "mcp-verbatim-update",
+        visibilityScope: internalFullScope(
+          "verbatim update persistence verification",
+        ),
+      };
+      expect(
+        (await shell.getEntityService().getEntity(entityRef))?.content,
+      ).toBe(original);
+      const proposal = await tool.handler(
+        {
+          entityType: "note",
+          id: "mcp-verbatim-update",
+          operation: {
+            kind: "source",
+            source: {
+              kind: "user-message",
+              boundaryMode: "lines",
+              startAfter,
+              endBefore,
+            },
+          },
+        },
+        context,
+      );
+      const approval = z
+        .object({
+          needsConfirmation: z.literal(true),
+          args: z.record(z.string(), z.unknown()),
+        })
+        .parse(proposal);
+      expect(approval.args).toMatchObject({
+        operation: {
+          kind: "source",
+          source: { contentHash: computeContentHash(content) },
+        },
+      });
+      expect(approval.args).not.toHaveProperty(["operation", "content"]);
+      await conversations.addMessage({
+        conversationId,
+        role: "user",
+        content: "Yes, apply it.",
+        metadata: { userPermissionLevel: "admin" },
+      });
+      expect(await tool.handler(approval.args, context)).toMatchObject({
+        success: true,
+      });
+      const saved = await shell.getEntityService().getEntity(entityRef);
+      expect(saved?.content).toBe(
+        `---\nvisibility: restricted\n---\n${content}`,
+      );
+      expect(saved?.visibility).toBe("restricted");
+    } finally {
+      await app.stop();
+    }
+  }, 120_000);
+
   test.each(["headless", "personal"] as const)(
     "exposes chat-only basic MCP at every canonical permission level in %s",
     async (name) => {
@@ -536,7 +737,7 @@ describe("canonical eval recipe ladder", () => {
       );
 
       try {
-        await app.initialize();
+        await initializeImported(app);
         const mcpService = app.getShell().getMCPService();
 
         for (const level of ["public", "trusted", "admin"] as const) {
@@ -576,7 +777,7 @@ describe("canonical eval recipe ladder", () => {
     const { app } = createSuiteApp("headless", selection, seedDirectory);
     let initializationError: unknown;
     try {
-      await app.initialize();
+      await initializeImported(app);
     } catch (error) {
       initializationError = error;
     } finally {

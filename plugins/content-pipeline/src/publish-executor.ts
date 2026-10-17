@@ -46,7 +46,7 @@ export interface PublishExecutorDeps {
   providerRegistry: ProviderRegistry;
   publishAssetPreflight?:
     | {
-        ensureForEntity(entity: BaseEntity): Promise<unknown>;
+        ensureOrRetry(entity: BaseEntity): Promise<unknown>;
       }
     | undefined;
 }
@@ -142,7 +142,7 @@ export class PublishExecutor implements PublishEntityExecutor {
   private async runPublishAssetPreflight(entity: BaseEntity): Promise<void> {
     if (!this.deps.publishAssetPreflight) return;
     try {
-      await this.deps.publishAssetPreflight.ensureForEntity(entity);
+      await this.deps.publishAssetPreflight.ensureOrRetry(entity);
     } catch (error) {
       this.deps.context.logger.warn("Publish asset preflight failed", {
         entityType: entity.entityType,
@@ -157,9 +157,12 @@ export class PublishExecutor implements PublishEntityExecutor {
     id?: string,
     slug?: string,
   ): Promise<PublishableEntity | null> {
+    // Read at full scope so the visibility gate in resolveCandidate can name
+    // why a non-public entity cannot be published; an unscoped read sees
+    // public entities only and would report it as missing.
     if (id) {
       return this.deps.context.entityService.getEntity(
-        { entityType, id },
+        { entityType, id, visibilityScope: "restricted" },
         publishableEntitySchema,
       );
     }
@@ -170,7 +173,7 @@ export class PublishExecutor implements PublishEntityExecutor {
       {
         entityType,
         options: {
-          filter: { metadata: { slug } },
+          filter: { metadata: { slug }, visibilityScope: "restricted" },
           limit: 1,
         },
       },

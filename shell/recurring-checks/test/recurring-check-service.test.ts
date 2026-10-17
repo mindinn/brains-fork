@@ -1,13 +1,21 @@
 import { describe, expect, it } from "bun:test";
+import { createClient, type Transaction } from "@libsql/client";
 import {
   createMockProgressReporter,
   createSilentLogger,
+  createTestDatabase,
+  waitUntil,
 } from "@brains/test-utils";
 import { Effect } from "@brains/utils/effect";
 import { deferred } from "@brains/utils/deferred";
 import type { Clock } from "@brains/utils/effect";
-import { TestClock, TestContext } from "@brains/utils/effect/test";
-import type { JobHandler, JobQueueEnqueueRequest } from "@brains/job-queue";
+import { TestClock } from "@brains/utils/effect/test";
+import {
+  JobQueueService,
+  type JobHandler,
+  type JobQueueEnqueueRequest,
+} from "@brains/job-queue";
+import { migrateJobQueue } from "@brains/job-queue/migrate";
 import type {
   IRuntimeStateNamespace,
   IRuntimeStateStore,
@@ -317,7 +325,7 @@ describe("RecurringCheckService", () => {
   it("shares Effect TestClock time with the scheduler and persisted run state", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const clock = yield* TestClock.testClock();
+        const clock = yield* TestClock.testClockWith(Effect.succeed);
         const { service, scheduler, queue, state } = createService({ clock });
         service.namespace("agent").register({
           id: "directory-scan",
@@ -332,7 +340,7 @@ describe("RecurringCheckService", () => {
           "agent:directory-scan",
           "daily",
         );
-        const start = clock.unsafeCurrentTimeMillis();
+        const start = clock.currentTimeMillisUnsafe();
         const previous = getPreviousOccurrence(new Date(start), schedule);
         const next = previous.getTime() + schedule.periodMs;
         yield* TestClock.adjust(next - start);
@@ -345,7 +353,7 @@ describe("RecurringCheckService", () => {
           checkId: "agent:directory-scan",
           at: new Date(next).toISOString(),
         });
-      }).pipe(Effect.provide(TestContext.TestContext)),
+      }).pipe(Effect.provide(TestClock.layer())),
     );
   });
 
@@ -418,7 +426,80 @@ describe("RecurringCheckService", () => {
     },
   );
 
-  it("reports every schedule shutdown failure after the barrier settles", async () => {
+  it.each([
+    ["stop", "check"],
+    ["stop", "catch-up"],
+    ["unregisterPlugin", "check"],
+    ["unregisterPlugin", "catch-up"],
+  ] as const)(
+    "%s drains admitted %s work after a synchronous schedule shutdown failure",
+    async (method, work) => {
+      const failed = Object.freeze({ message: "Schedule shutdown threw" });
+      const entered = deferred();
+      const release = deferred();
+      let stopCalls = 0;
+      const scheduler: SchedulerBackend = {
+        scheduleCron: (): ScheduledJob => ({
+          stop: (): Promise<void> => {
+            stopCalls += 1;
+            throw failed;
+          },
+        }),
+        scheduleInterval: (): never => {
+          throw new Error("Unexpected interval schedule");
+        },
+        validateCron: (): void => {},
+      };
+      const { service, queue, state } = createService({ scheduler });
+      let checkSignal: AbortSignal | undefined;
+      service.namespace("agent").register({
+        id: "blocked",
+        cadence: "daily",
+        run: async ({ signal }) => {
+          checkSignal = signal;
+          entered.resolve();
+          await release.promise;
+          return {};
+        },
+      });
+      if (work === "catch-up") {
+        queue.enqueueHook = async (): Promise<string> => {
+          entered.resolve();
+          await release.promise;
+          return "blocked-job";
+        };
+      }
+      const starting = service.start();
+      if (work === "check") await starting;
+      const active =
+        work === "check" ? service.runNow("agent:blocked") : starting;
+      const observed = active.catch((error: unknown) => error);
+      await entered.promise;
+      let settled = false;
+      const closing = (
+        method === "stop" ? service.stop() : service.unregisterPlugin("agent")
+      )
+        .catch((error: unknown) => error)
+        .finally(() => {
+          settled = true;
+        });
+      try {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(settled).toBe(false);
+        if (work === "check") expect(checkSignal?.aborted).toBe(true);
+      } finally {
+        release.resolve();
+        await Promise.allSettled([starting, observed]);
+      }
+      expect(await closing).toBe(failed);
+      if (work === "check") expect(await observed).toBe(checkSignal?.reason);
+      expect(state.snapshot()).toEqual([]);
+      await service.unregisterPlugin("agent");
+      expect(stopCalls).toBe(1);
+    },
+  );
+
+  it("reports synchronous and asynchronous schedule shutdown failures together", async () => {
     const failures = [
       new Error("First schedule failed"),
       new Error("Second schedule failed"),
@@ -426,7 +507,11 @@ describe("RecurringCheckService", () => {
     let stopCalls = 0;
     const scheduler: SchedulerBackend = {
       scheduleCron: (): ScheduledJob => ({
-        stop: (): Promise<void> => Promise.reject(failures[stopCalls++]),
+        stop: (): Promise<void> => {
+          const failure = failures[stopCalls++];
+          if (stopCalls === 1) throw failure;
+          return Promise.reject(failure);
+        },
       }),
       scheduleInterval: (): never => {
         throw new Error("Unexpected interval schedule");
@@ -1051,4 +1136,273 @@ describe("RecurringCheckService", () => {
     expect(delivered).toEqual(["one"]);
     expect(runs).toBe(2);
   });
+});
+
+/**
+ * A service on a real job queue whose file a second client — the other
+ * process — can hold, so an enqueue is refused the way it is in production:
+ * after the queue's whole enqueue budget.
+ */
+interface ContendedQueueFixture {
+  scheduler: TestSchedulerBackend;
+  service: RecurringCheckService;
+  refusals: unknown[];
+  firstFireAt: number;
+  periodMs: number;
+  unregister(): void;
+  holdQueue(): Promise<Transaction>;
+  queuedRuns(): Promise<number>;
+  cleanup(): Promise<void>;
+}
+
+async function createContendedQueueFixture(
+  clock: Clock.Clock,
+  options: { start?: boolean } = {},
+): Promise<ContendedQueueFixture> {
+  const database = await createTestDatabase({
+    prefix: "recurring-check-contention-",
+    filename: "brain-jobs.db",
+    migrate: (url) => migrateJobQueue({ url }, logger),
+  });
+  const queue = JobQueueService.createFresh({ url: database.url }, logger);
+  await queue.initialize();
+  const refusals: unknown[] = [];
+  const scheduler = new TestSchedulerBackend({ clock });
+  const service = new RecurringCheckService({
+    brainId: "brain.example",
+    scheduler,
+    runtimeState: new MemoryRuntimeState(),
+    jobQueue: {
+      enqueue: (request): Promise<string> =>
+        queue.enqueue(request).catch((error: unknown) => {
+          refusals.push(error);
+          throw error;
+        }),
+      registerHandler: (type, handler, pluginId): void => {
+        queue.registerHandler(type, handler, pluginId);
+      },
+      unregisterHandler: (type): void => {
+        queue.unregisterHandler(type);
+      },
+    },
+    delivery: { deliver: async (): Promise<boolean> => true },
+    logger,
+    clock,
+  });
+  const unregister = service.namespace("agent").register({
+    id: "directory-scan",
+    cadence: "daily",
+    run: async () => ({}),
+  });
+  if (options.start !== false) {
+    await service.start();
+    // Settle the startup catch-up; the scheduled run is the one under test.
+    for (const job of await queue.getActiveJobs([RECURRING_CHECK_JOB_TYPE])) {
+      await queue.complete(job.id, {});
+    }
+  }
+  const worker = database.track(createClient({ url: database.url }));
+  const schedule = createRecurringCheckSchedule(
+    "brain.example",
+    "agent:directory-scan",
+    "daily",
+  );
+  return {
+    scheduler,
+    service,
+    refusals,
+    firstFireAt:
+      getPreviousOccurrence(
+        new Date(clock.currentTimeMillisUnsafe()),
+        schedule,
+      ).getTime() + schedule.periodMs,
+    periodMs: schedule.periodMs,
+    unregister,
+    holdQueue: (): Promise<Transaction> => worker.transaction("write"),
+    queuedRuns: async (): Promise<number> =>
+      (await queue.getActiveJobs([RECURRING_CHECK_JOB_TYPE])).length,
+    cleanup: async (): Promise<void> => {
+      await service.stop();
+      queue.close();
+      await database.cleanup();
+    },
+  };
+}
+
+function withTestClock(
+  body: (clock: TestClock.TestClock) => Promise<void>,
+): Promise<void> {
+  return Effect.runPromise(
+    TestClock.testClockWith((clock) => Effect.promise(() => body(clock))).pipe(
+      Effect.provide(TestClock.layer()),
+    ),
+  );
+}
+
+async function release(held: Transaction): Promise<void> {
+  if (!held.closed) await held.rollback();
+  held.close();
+}
+
+/** Advance the shared clock until the refused run has been retried. */
+async function waitForRefusals(
+  clock: TestClock.TestClock,
+  fixture: ContendedQueueFixture,
+  count: number,
+): Promise<void> {
+  await waitUntil(
+    async () => {
+      await Effect.runPromise(clock.adjust(1_000));
+      return fixture.refusals.length >= count;
+    },
+    `${count} refused enqueues`,
+    { timeoutMs: 10_000, intervalMs: 50 },
+  );
+}
+
+// Lets a retry that was just refused settle into its backoff sleep.
+const RETRY_SETTLE_MS = 50;
+
+describe("RecurringCheckService refused scheduled runs", () => {
+  it("enqueues a refused scheduled run once the queue is released", async () => {
+    await withTestClock(async (clock) => {
+      const fixture = await createContendedQueueFixture(clock);
+      const held = await fixture.holdQueue();
+      try {
+        await Effect.runPromise(clock.setTime(fixture.firstFireAt));
+        await fixture.scheduler.runDue();
+        expect(fixture.refusals).toHaveLength(1);
+        await release(held);
+
+        await waitUntil(
+          async () => {
+            await Effect.runPromise(clock.adjust(1_000));
+            return (await fixture.queuedRuns()) === 1;
+          },
+          "the refused run to be queued",
+          { timeoutMs: 5_000, intervalMs: 20 },
+        );
+        await Effect.runPromise(clock.adjust(5 * 60_000));
+        await Bun.sleep(RETRY_SETTLE_MS);
+        expect(await fixture.queuedRuns()).toBe(1);
+        expect(fixture.refusals).toHaveLength(1);
+      } finally {
+        await release(held);
+        await fixture.cleanup();
+      }
+    });
+  }, 20_000);
+
+  it("stops retrying a refused run when the next scheduled run arrives", async () => {
+    await withTestClock(async (clock) => {
+      const fixture = await createContendedQueueFixture(clock);
+      const held = await fixture.holdQueue();
+      try {
+        await Effect.runPromise(clock.setTime(fixture.firstFireAt));
+        await fixture.scheduler.runDue();
+        await waitForRefusals(clock, fixture, 2);
+        await Bun.sleep(RETRY_SETTLE_MS);
+
+        // The retry wakes just before the next run; its next backoff would
+        // reach past it, so this refusal is the last.
+        const nextFireAt = fixture.firstFireAt + fixture.periodMs;
+        await Effect.runPromise(clock.setTime(nextFireAt - 1));
+        await waitUntil(
+          () => fixture.refusals.length === 3,
+          "the last retry to be refused",
+          { timeoutMs: 5_000 },
+        );
+        await Bun.sleep(RETRY_SETTLE_MS);
+        await release(held);
+
+        // Past the next run without firing it: nothing retries any more.
+        await Effect.runPromise(clock.adjust(10 * 60_000));
+        await Bun.sleep(RETRY_SETTLE_MS);
+        expect(await fixture.queuedRuns()).toBe(0);
+        expect(fixture.refusals).toHaveLength(3);
+
+        await fixture.scheduler.runDue();
+        expect(await fixture.queuedRuns()).toBe(1);
+      } finally {
+        await release(held);
+        await fixture.cleanup();
+      }
+    });
+  }, 30_000);
+
+  it("retries a refused startup catch-up until the queue admits it", async () => {
+    await withTestClock(async (clock) => {
+      const fixture = await createContendedQueueFixture(clock, {
+        start: false,
+      });
+      const held = await fixture.holdQueue();
+      try {
+        await fixture.service.start();
+        expect(fixture.refusals).toHaveLength(1);
+        await release(held);
+
+        await waitUntil(
+          async () => {
+            await Effect.runPromise(clock.adjust(1_000));
+            return (await fixture.queuedRuns()) === 1;
+          },
+          "the refused catch-up to be queued",
+          { timeoutMs: 5_000, intervalMs: 20 },
+        );
+        expect(fixture.refusals).toHaveLength(1);
+      } finally {
+        await release(held);
+        await fixture.cleanup();
+      }
+    });
+  }, 20_000);
+
+  it("stops retrying a refused run when its check is unregistered", async () => {
+    await withTestClock(async (clock) => {
+      const fixture = await createContendedQueueFixture(clock);
+      const held = await fixture.holdQueue();
+      try {
+        await Effect.runPromise(clock.setTime(fixture.firstFireAt));
+        await fixture.scheduler.runDue();
+        await waitForRefusals(clock, fixture, 2);
+        await Bun.sleep(RETRY_SETTLE_MS);
+
+        fixture.unregister();
+        await Bun.sleep(RETRY_SETTLE_MS);
+        await release(held);
+        await Effect.runPromise(clock.adjust(10 * 60_000));
+        await Bun.sleep(RETRY_SETTLE_MS);
+
+        expect(await fixture.queuedRuns()).toBe(0);
+        expect(fixture.refusals).toHaveLength(2);
+      } finally {
+        await release(held);
+        await fixture.cleanup();
+      }
+    });
+  }, 20_000);
+
+  it("stops retrying a refused run when the service stops", async () => {
+    await withTestClock(async (clock) => {
+      const fixture = await createContendedQueueFixture(clock);
+      const held = await fixture.holdQueue();
+      try {
+        await Effect.runPromise(clock.setTime(fixture.firstFireAt));
+        await fixture.scheduler.runDue();
+        await waitForRefusals(clock, fixture, 2);
+        await Bun.sleep(RETRY_SETTLE_MS);
+
+        await fixture.service.stop();
+        await release(held);
+        await Effect.runPromise(clock.adjust(10 * 60_000));
+        await Bun.sleep(RETRY_SETTLE_MS);
+
+        expect(await fixture.queuedRuns()).toBe(0);
+        expect(fixture.refusals).toHaveLength(2);
+      } finally {
+        await release(held);
+        await fixture.cleanup();
+      }
+    });
+  }, 20_000);
 });

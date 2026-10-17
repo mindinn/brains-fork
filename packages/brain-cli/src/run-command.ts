@@ -19,7 +19,7 @@ import { spawnBunRunner } from "./lib/spawn-bun-runner";
 import pkg from "../package.json" with { type: "json" };
 import { scaffold, type ScaffoldOptions } from "./commands/init";
 import { promptInitOptions, isInteractive } from "./lib/init-prompts";
-import { start, findRunner } from "./commands/start";
+import { start, sourceRunner } from "./commands/start";
 import { operate, operateRawTool } from "./commands/operate";
 import { UserPermissionLevelSchema } from "@brains/templates";
 import { operateRemote } from "./commands/operate-remote";
@@ -344,7 +344,7 @@ const toolCommand: BrainCommand = defineCommand({
     const confirmRequested = getBooleanFlag(flags, "yes") ?? false;
     const requestedPermission = getStringFlag(flags, "permission");
 
-    const runner = findRunner(dir);
+    const runner = sourceRunner(dir);
     if (runner) {
       if (confirmRequested || requestedPermission !== undefined) {
         return {
@@ -454,12 +454,20 @@ export async function runCommand(
 ): Promise<CommandResult> {
   const resolved = resolveSubcommand(registry, parsed.command, parsed.args);
   const command = registry.get(resolved.name);
+  const remote = getStringFlag(parsed.flags, "remote");
   if (command) {
+    // Built-in commands run in this process. Ignoring --remote would boot a
+    // second brain against the same data as the one the user meant to reach.
+    if (remote) {
+      return {
+        success: false,
+        message: `\`brain ${resolved.name}\` runs in this process and does not support --remote. Remote mode calls the brain's own commands, e.g. \`brain build-site preview --remote ${remote}\`.`,
+      };
+    }
     return command.run({ args: resolved.args, flags: parsed.flags }, dir);
   }
 
   // Remote mode — query deployed brain via MCP HTTP
-  const remote = getStringFlag(parsed.flags, "remote");
   if (remote) {
     const url = resolveRemoteUrl(remote);
     const token = resolveToken(getStringFlag(parsed.flags, "token"));
@@ -485,7 +493,7 @@ async function runHelp(cwd?: string): Promise<CommandResult> {
   const hasBrainYaml = existsSync(join(dir, "brain.yaml"));
 
   if (hasBrainYaml) {
-    const runner = findRunner(dir);
+    const runner = sourceRunner(dir);
     if (runner) {
       try {
         const output = execSync(`bun run ${runner.path} --list-cli-commands`, {

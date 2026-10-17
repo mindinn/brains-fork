@@ -4,19 +4,11 @@ import {
   createMockEntityService,
   createTestEntity,
 } from "@brains/entity-service/test";
-import {
-  describe,
-  it,
-  expect,
-  beforeEach,
-  afterEach,
-  mock,
-  spyOn,
-} from "bun:test";
+import { describe, it, expect, beforeEach, mock, spyOn } from "bun:test";
 import { AIContentDataSource } from "../src/datasources/ai-content-datasource";
 import type { IAIService } from "@brains/ai-service";
 import type { IEntityService, SearchResult } from "@brains/plugins";
-import { resetPromptCache } from "@brains/plugins";
+import { resetPromptMaterialization } from "@brains/plugins";
 import { EntityUrlGenerator } from "@brains/site-composition";
 import type { Template } from "@brains/templates";
 import { z } from "@brains/utils/zod";
@@ -88,9 +80,16 @@ function createDataSourceWithSearch(
     templateRegistry,
     getIdentityContent,
     getProfileContent,
+    entityUrls,
     siteBaseUrl,
   );
 }
+
+const entityUrls = new EntityUrlGenerator({
+  post: { label: "Post" },
+  deck: { label: "Deck" },
+  note: { label: "Note" },
+});
 
 describe("AIContentDataSource", () => {
   let aiContentDataSource: AIContentDataSource;
@@ -190,13 +189,7 @@ describe("AIContentDataSource", () => {
   }
 
   beforeEach(() => {
-    resetPromptCache();
-    EntityUrlGenerator.resetInstance();
-    EntityUrlGenerator.getInstance().configure({
-      post: { label: "Post" },
-      deck: { label: "Deck" },
-      note: { label: "Note" },
-    });
+    resetPromptMaterialization();
 
     mockAIService = createMockAIService({
       returns: { generateObject: { message: "Test response" } },
@@ -221,11 +214,8 @@ describe("AIContentDataSource", () => {
       mockTemplateRegistry,
       mockGetIdentityContent,
       mockGetProfileContent,
+      entityUrls,
     );
-  });
-
-  afterEach(() => {
-    EntityUrlGenerator.resetInstance();
   });
 
   describe("metadata", () => {
@@ -328,6 +318,36 @@ describe("AIContentDataSource", () => {
       });
 
       expect(getSystemPrompt()).not.toContain("# Style Guide");
+    });
+
+    it("states that the style guide governs voice and form over the instructions", async () => {
+      await generate("Hello", "test-template", undefined, {
+        styleGuide: { voice: "Voice: full paragraphs" },
+      });
+
+      const systemPrompt = getSystemPrompt();
+      expect(systemPrompt).toContain("# Precedence");
+      expect(systemPrompt).toContain(
+        "When they conflict on voice or form, follow the style guide.",
+      );
+      expect(systemPrompt.indexOf("# Style Guide")).toBeLessThan(
+        systemPrompt.indexOf("# Precedence"),
+      );
+      expect(systemPrompt.indexOf("# Precedence")).toBeLessThan(
+        systemPrompt.indexOf("# Instructions"),
+      );
+    });
+
+    it("states no precedence when no style-guide payload is supplied", async () => {
+      await generate("Hello");
+
+      expect(getSystemPrompt()).not.toContain("# Precedence");
+    });
+
+    it("states no precedence when the style-guide payload has no facets", async () => {
+      await generate("Hello", "test-template", undefined, { styleGuide: {} });
+
+      expect(getSystemPrompt()).not.toContain("# Precedence");
     });
   });
 
@@ -531,6 +551,25 @@ describe("AIContentDataSource", () => {
       const userPrompt = getUserPrompt();
       expect(userPrompt).toContain("Recent conversation context");
       expect(userPrompt).toContain("Tell me about AI");
+    });
+
+    it("sends the template instructions only in the system prompt", async () => {
+      await generate("Hello");
+
+      expect(getSystemPrompt()).toContain("You are a helpful assistant.");
+      expect(getUserPrompt()).not.toContain("You are a helpful assistant.");
+      expect(getUserPrompt()).toStartWith("Additional instructions: Hello");
+    });
+
+    it("sends a non-empty user prompt when the request carries no context", async () => {
+      await aiContentDataSource.generate(
+        { templateName: "test-template" },
+        messageSchema,
+      );
+
+      expect(getUserPrompt()).toBe(
+        "Generate the content described in your instructions.",
+      );
     });
 
     it("should validate output against schema", async () => {

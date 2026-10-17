@@ -15,6 +15,7 @@ import type {
   GitReconciliationDelta,
 } from "../../src/types";
 import { createMockDirectorySync, createMockGitSync } from "../fixtures";
+import type { MatchesHead } from "../../src/lib/file-watcher";
 
 const BASELINE: GitReconciliationCheckpoint = {
   remoteFingerprint: "a".repeat(64),
@@ -107,16 +108,27 @@ describe("GitReconciliationService", () => {
         totalFiles: 2,
       };
     });
-    const suppressWatchPaths = mock(() => {
-      calls.push("suppress");
-    });
+    const ignorePulledWatchPaths = mock(
+      (_paths: string[], _matchesHead: MatchesHead) => {
+        calls.push("ignore-pulled");
+      },
+    );
+    // The working tree after the pull, with one pulled file edited since.
+    const getStatus = mock(async () => ({
+      isRepo: true,
+      hasChanges: true,
+      ahead: 0,
+      behind: 0,
+      branch: "main",
+      files: [{ path: "note/changed.md", status: " M" }],
+    }));
 
     const result = await service.pullAndQueue({
-      gitSync: createMockGitSync({ pull, getReconciliationDelta }),
+      gitSync: createMockGitSync({ pull, getReconciliationDelta, getStatus }),
       directorySync: createMockDirectorySync({
         recordPendingPullDeletes,
         queueSyncBatch,
-        suppressWatchPaths,
+        ignorePulledWatchPaths,
       }),
       context,
       source: "periodic-sync",
@@ -127,8 +139,13 @@ describe("GitReconciliationService", () => {
       "derive",
       "pending-deletes",
       "queue",
-      "suppress",
+      "ignore-pulled",
     ]);
+    const [paths, matchesHead] = ignorePulledWatchPaths.mock.calls[0] ?? [];
+    expect(paths).toEqual(["note/changed.md", "note/deleted.md"]);
+    expect(await matchesHead?.(["note/changed.md", "note/deleted.md"])).toEqual(
+      ["note/deleted.md"],
+    );
     expect(recordPendingPullDeletes).toHaveBeenCalledWith(["note/deleted.md"]);
     expect(queueSyncBatch).toHaveBeenCalledWith(
       context,
@@ -138,6 +155,89 @@ describe("GitReconciliationService", () => {
       ["note/deleted.md"],
     );
     expect(result.batch?.batchId).toBe("batch-1");
+    expect(await service.getCheckpoint()).toEqual(TARGET);
+  });
+
+  it("queues only the changed files that are not the brain's own exports", async () => {
+    // Auto-sync commits what the brain exports; the delta since the
+    // checkpoint lists those files again. Importing them can only skip.
+    const context = createContext();
+    const service = new GitReconciliationService(context.runtimeState);
+    await service.saveCheckpoint(BASELINE);
+    const queueSyncBatch = mock(async () => ({
+      batchId: "batch-1",
+      operationCount: 2,
+      exportOperationsCount: 0,
+      importOperationsCount: 1,
+      totalFiles: 2,
+    }));
+    const withoutStoredEchoes = mock(async (paths: string[]) =>
+      paths.filter((path) => path !== "note/own.md"),
+    );
+
+    const result = await service.pullAndQueue({
+      gitSync: createMockGitSync({
+        getReconciliationDelta: mock(async () =>
+          incremental({
+            files: ["note/own.md", "note/changed.md", "note/deleted.md"],
+          }),
+        ),
+      }),
+      directorySync: createMockDirectorySync({
+        queueSyncBatch,
+        withoutStoredEchoes,
+      }),
+      context,
+      source: "periodic-sync",
+    });
+
+    expect(withoutStoredEchoes).toHaveBeenCalledWith([
+      "note/own.md",
+      "note/changed.md",
+      "note/deleted.md",
+    ]);
+    expect(queueSyncBatch).toHaveBeenCalledWith(
+      context,
+      "periodic-sync",
+      undefined,
+      ["note/changed.md", "note/deleted.md"],
+      ["note/deleted.md"],
+    );
+    expect(result.files).toEqual(["note/changed.md", "note/deleted.md"]);
+    expect(await service.getCheckpoint()).toEqual(TARGET);
+  });
+
+  it("advances without a batch when every change is the brain's own export", async () => {
+    const context = createContext();
+    const service = new GitReconciliationService(context.runtimeState);
+    await service.saveCheckpoint(BASELINE);
+    const queueSyncBatch = mock(async (): Promise<null> => null);
+    const ignorePulledWatchPaths = mock(
+      (_paths: string[], _matchesHead: MatchesHead) => {},
+    );
+
+    const result = await service.pullAndQueue({
+      gitSync: createMockGitSync({
+        getReconciliationDelta: mock(async () =>
+          incremental({ files: ["note/own.md"], deletedFiles: [] }),
+        ),
+      }),
+      directorySync: createMockDirectorySync({
+        queueSyncBatch,
+        ignorePulledWatchPaths,
+        withoutStoredEchoes: mock(async (): Promise<string[]> => []),
+      }),
+      context,
+      source: "periodic-sync",
+    });
+
+    expect(queueSyncBatch).not.toHaveBeenCalled();
+    expect(ignorePulledWatchPaths.mock.calls[0]?.[0]).toEqual(["note/own.md"]);
+    expect(result).toMatchObject({
+      files: [],
+      batch: null,
+      checkpointAdvanced: true,
+    });
     expect(await service.getCheckpoint()).toEqual(TARGET);
   });
 
@@ -190,6 +290,44 @@ describe("GitReconciliationService", () => {
     expect(queueSyncBatch).toHaveBeenCalledWith(
       context,
       "startup-replay",
+      undefined,
+    );
+    expect(result.mode).toBe("full");
+    expect(await service.getCheckpoint()).toEqual(TARGET);
+  });
+
+  it("queues every file past an existing checkpoint when asked for a full reconciliation", async () => {
+    const context = createContext();
+    const service = new GitReconciliationService(context.runtimeState);
+    await service.saveCheckpoint(BASELINE);
+    const getReconciliationDelta = mock(
+      async (
+        checkpoint?: GitReconciliationCheckpoint,
+      ): Promise<GitReconciliationDelta> =>
+        checkpoint
+          ? incremental()
+          : { mode: "full", checkpoint: TARGET, reason: "missing-checkpoint" },
+    );
+    const queueSyncBatch = mock(async () => ({
+      batchId: "full-batch",
+      operationCount: 2,
+      exportOperationsCount: 0,
+      importOperationsCount: 1,
+      totalFiles: 1,
+    }));
+
+    const result = await service.pullAndQueue({
+      gitSync: createMockGitSync({ getReconciliationDelta }),
+      directorySync: createMockDirectorySync({ queueSyncBatch }),
+      context,
+      source: "initial-sync",
+      full: true,
+    });
+
+    expect(getReconciliationDelta).toHaveBeenCalledWith(undefined);
+    expect(queueSyncBatch).toHaveBeenCalledWith(
+      context,
+      "initial-sync",
       undefined,
     );
     expect(result.mode).toBe("full");
@@ -280,7 +418,9 @@ describe("GitReconciliationService", () => {
         runtimeState,
       };
       const beforeCrash = new GitReconciliationService(runtimeState);
-      await beforeCrash.captureCurrent(gitSync);
+      await beforeCrash.saveCheckpoint(
+        (await gitSync.getReconciliationDelta(undefined)).checkpoint,
+      );
 
       await runGit(["clone", remoteDir, writerDir], root);
       writeFileSync(join(writerDir, "remote-after-checkpoint.md"), "# Remote");
@@ -332,22 +472,5 @@ describe("GitReconciliationService", () => {
       await gitSync.cleanup();
       rmSync(root, { recursive: true, force: true });
     }
-  });
-
-  it("captures current Git state only after a completed full initial sync", async () => {
-    const context = createContext();
-    const service = new GitReconciliationService(context.runtimeState);
-    const getReconciliationDelta = mock(
-      async (): Promise<GitReconciliationDelta> => ({
-        mode: "full",
-        checkpoint: TARGET,
-        reason: "missing-checkpoint",
-      }),
-    );
-
-    await service.captureCurrent(createMockGitSync({ getReconciliationDelta }));
-
-    expect(getReconciliationDelta).toHaveBeenCalledWith(undefined);
-    expect(await service.getCheckpoint()).toEqual(TARGET);
   });
 });

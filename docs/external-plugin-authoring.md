@@ -364,6 +364,10 @@ blocks for authenticated Studio operations. Studio-only capabilities include:
   parsing and controls; the schema must accept `{}` and provide its initial
   defaults so the workspace has a canonical base URL state;
 - immutable caller-filtered action and entity catalogs;
+- `publishesEntityTypes: true`, which makes the workspace the target of the
+  Studio editor's publication actions for the entity types it covers; it
+  requires entities or an entity catalog and the `queue`, `remove`, `retry`,
+  `reorder`, and `publish` actions;
 - bounded host-rendered plain text for authenticated source detail;
 - semantic view heads and status plus bounded `card` groups and primary/aside
   `columns`; cards contain panels, columns contain panels or cards, and nested
@@ -371,7 +375,7 @@ blocks for authenticated Studio operations. Studio-only capabilities include:
 - typed `defineWorkspaceAction()` inputs/outputs and permission floors;
 - static confirmation text or prepared confirmation bound to caller, action,
   input, revision, expiry, and one use; and
-- closed external, entity, Account, Admin, Inbox, Publishing, and Site launch
+- closed external, entity, Account, Admin, Inbox, Publishing, Site, and Traffic launch
   intents resolved by the host, including Inbox detail, Chat discussion, and
   note-capture handoffs without author-supplied URLs.
 

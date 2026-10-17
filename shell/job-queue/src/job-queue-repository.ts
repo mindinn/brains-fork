@@ -9,10 +9,12 @@ import {
   isNull,
   lte,
   notExists,
+  notInArray,
   or,
   sql,
   type SQL,
 } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { jobQueue, jobWorkerSessions } from "./schema/job-queue";
 import type { InsertJobQueue, JobQueue } from "./schema/job-queue";
 import { getErrorMessage } from "@brains/utils/error";
@@ -44,6 +46,8 @@ export interface JobAttemptClaim {
   workerSessionId: string;
   leaseDurationMs: number;
   executableTypes: readonly string[];
+  /** Types claimed only while no other job of the type holds a live lease. */
+  exclusiveTypes?: readonly string[] | undefined;
 }
 
 export interface RetireUnownedActiveJobRequest {
@@ -89,11 +93,11 @@ export interface JobQueueWriteTransactionClient {
   transaction(mode: "write"): Promise<Transaction>;
 }
 
-// App-level retries stand in for SQLite's busy_timeout (which would block the
-// event loop on local libSQL), so the retry budget is time, not attempts: it
-// must absorb a slow winner's entire write-transaction stream under real
-// cross-process contention. Any fixed attempt cap re-becomes a flake on a
-// starved runner.
+// The job queue's client surfaces every refusal, so these retries are its only
+// contention policy (busy_timeout would block the event loop on local libSQL).
+// The retry budget is time, not attempts: it must absorb a slow winner's entire
+// write-transaction stream under real cross-process contention. Any fixed
+// attempt cap re-becomes a flake on a starved runner.
 const WRITE_RETRY_BUDGET_MS = 2_000;
 const WRITE_RETRY_BASE_DELAY_MS = 5;
 const WRITE_RETRY_MAX_DELAY_MS = 40;
@@ -1013,6 +1017,8 @@ export class JobQueueRepository {
    * Atomically claim the highest-priority executable pending or reclaimable job.
    * A superseded session is reclaimable immediately; any other attempt once
    * its lease expires, since a live worker renews the leases it still runs.
+   * A reclaim past the job's retries fails it instead and returns it with
+   * status failed, so the caller can surface that terminal failure.
    */
   public async claimNextReady(
     claim: JobAttemptClaim,
@@ -1024,6 +1030,7 @@ export class JobQueueRepository {
       workerSessionId,
       leaseDurationMs,
       executableTypes,
+      exclusiveTypes = [],
     } = claim;
 
     const claimingSession = this.db
@@ -1053,6 +1060,27 @@ export class JobQueueRepository {
         lte(jobQueue.leaseExpiresAt, now),
       ),
     );
+    // Another job of the same type running under a live lease: an exclusive
+    // type waits in the queue until it settles or its lease lapses.
+    const running = alias(jobQueue, "running");
+    const liveSibling = this.db
+      .select({ id: running.id })
+      .from(running)
+      .where(
+        and(
+          eq(running.type, jobQueue.type),
+          eq(running.status, JOB_STATUS.PROCESSING),
+          gt(running.leaseExpiresAt, now),
+          sql`${running.id} <> ${jobQueue.id}`,
+        ),
+      );
+    const exclusiveFree =
+      exclusiveTypes.length === 0
+        ? undefined
+        : or(
+            notInArray(jobQueue.type, [...exclusiveTypes]),
+            notExists(liveSibling),
+          );
     const terminalReclaim = sql`${jobQueue.status} = ${JOB_STATUS.PROCESSING} AND ${jobQueue.retryCount} + 1 > ${jobQueue.maxRetries}`;
 
     const candidate = this.db
@@ -1061,6 +1089,7 @@ export class JobQueueRepository {
       .where(
         and(
           inArray(jobQueue.type, executableTypes),
+          exclusiveFree,
           or(
             and(
               eq(jobQueue.status, JOB_STATUS.PENDING),
@@ -1094,7 +1123,8 @@ export class JobQueueRepository {
     );
 
     const claimed = result[0];
-    if (claimed?.status !== JOB_STATUS.PROCESSING) return null;
+    if (!claimed) return null;
+    if (claimed.status === JOB_STATUS.FAILED) return claimed;
 
     this.logger.debug("Job claimed", {
       jobId: claimed.id,
