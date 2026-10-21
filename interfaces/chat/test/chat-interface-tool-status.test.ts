@@ -201,7 +201,7 @@ describe("ChatInterface tool status and progress", () => {
     );
   });
 
-  it("removes completed Slack tool status when the final response arrives", async () => {
+  it("posts no running or completed tool status on Slack", async () => {
     const plugin = new ChatInterface({ adapters: { slack: baseSlackConfig } });
     const toolInterface = withToolActivity(plugin);
     const threadId = "slack:C123:1712345678.000100";
@@ -252,13 +252,12 @@ describe("ChatInterface tool status and progress", () => {
 
     await chat?.handlers.mentions[0]?.(thread, createMessage());
 
-    expect(statusMessage.delete).toHaveBeenCalledTimes(1);
-    expect(statusMessage.edit).not.toHaveBeenCalledWith(
-      expect.objectContaining({ fallbackText: "Tool completed: create" }),
-    );
+    expect(thread.post).toHaveBeenCalledTimes(1);
     expect(thread.post).toHaveBeenLastCalledWith({
       markdown: "The upload is unavailable.",
     });
+    expect(statusMessage.delete).not.toHaveBeenCalled();
+    expect(statusMessage.edit).not.toHaveBeenCalled();
   });
 
   it("ignores non-Discord progress events even when a Discord thread is tracked", async () => {

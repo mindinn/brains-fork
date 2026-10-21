@@ -457,10 +457,16 @@ export class ChatInterface extends MessageInterfacePlugin<
     const isCompactedApprovalStatus =
       isSlack &&
       this.compactingSlackApprovalToolStatuses.has(getToolStatusKey(update));
+    // Slack gets no "Tool running" card: every tool call would otherwise
+    // post a message, and a channel full of "Tool running: list" is noise.
+    // Approval requests and failures still post, because the person must act
+    // on them. A completed status only clears what an earlier state posted.
+    const isQuietSlackStatus =
+      isSlack && (update.state === "running" || update.state === "completed");
     if (
       isCompactedApprovalStatus ||
       isActiveSlackConfirmation ||
-      (isSlack && update.state === "completed")
+      isQuietSlackStatus
     ) {
       await this.toolStatusMessenger.dismiss(update);
       return;

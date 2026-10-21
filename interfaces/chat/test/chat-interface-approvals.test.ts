@@ -445,9 +445,9 @@ describe("ChatInterface approvals", () => {
 
     await chat?.handlers.mentions[0]?.(thread, createMessage());
 
-    expect(sentMessages[0]?.delete).toHaveBeenCalledTimes(1);
-    expect(thread.post).toHaveBeenCalledTimes(2);
-    const approvalMessage = sentMessages[1];
+    // Slack posts no running status, so the approval card is the first post.
+    expect(thread.post).toHaveBeenCalledTimes(1);
+    const approvalMessage = sentMessages[0];
 
     await chat?.handlers.actions[0]?.handler({
       actionId: "approval.confirm",
@@ -472,7 +472,7 @@ describe("ChatInterface approvals", () => {
         fallbackText: "Approval confirmed: Create note?",
       }),
     );
-    expect(thread.post).toHaveBeenCalledTimes(2);
+    expect(thread.post).toHaveBeenCalledTimes(1);
   });
 
   it("consolidates cancelled Slack approvals into the resolved card", async () => {
