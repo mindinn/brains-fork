@@ -1,5 +1,126 @@
 # @brains/atproto
 
+## 0.2.0-alpha.575
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/atproto-contracts@0.2.0-alpha.575
+  - @brains/contracts@0.2.0-alpha.575
+  - @brains/site-composition@0.2.0-alpha.575
+  - @brains/utils@0.2.0-alpha.575
+  - @brains/plugins@0.2.0-alpha.575
+
+## 0.2.0-alpha.574
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/atproto-contracts@0.2.0-alpha.574
+  - @brains/contracts@0.2.0-alpha.574
+  - @brains/site-composition@0.2.0-alpha.574
+  - @brains/utils@0.2.0-alpha.574
+  - @brains/plugins@0.2.0-alpha.574
+
+## 0.2.0-alpha.573
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/atproto-contracts@0.2.0-alpha.573
+  - @brains/contracts@0.2.0-alpha.573
+  - @brains/site-composition@0.2.0-alpha.573
+  - @brains/utils@0.2.0-alpha.573
+  - @brains/plugins@0.2.0-alpha.573
+
+## 0.2.0-alpha.572
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/atproto-contracts@0.2.0-alpha.572
+  - @brains/contracts@0.2.0-alpha.572
+  - @brains/site-composition@0.2.0-alpha.572
+  - @brains/utils@0.2.0-alpha.572
+  - @brains/plugins@0.2.0-alpha.572
+
+## 0.2.0-alpha.571
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/atproto-contracts@0.2.0-alpha.571
+  - @brains/contracts@0.2.0-alpha.571
+  - @brains/site-composition@0.2.0-alpha.571
+  - @brains/utils@0.2.0-alpha.571
+  - @brains/plugins@0.2.0-alpha.571
+
+## 0.2.0-alpha.570
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/atproto-contracts@0.2.0-alpha.570
+  - @brains/contracts@0.2.0-alpha.570
+  - @brains/site-composition@0.2.0-alpha.570
+  - @brains/utils@0.2.0-alpha.570
+  - @brains/plugins@0.2.0-alpha.570
+
+## 0.2.0-alpha.569
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/atproto-contracts@0.2.0-alpha.569
+  - @brains/contracts@0.2.0-alpha.569
+  - @brains/site-composition@0.2.0-alpha.569
+  - @brains/utils@0.2.0-alpha.569
+  - @brains/plugins@0.2.0-alpha.569
+
+## 0.2.0-alpha.568
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/atproto-contracts@0.2.0-alpha.568
+  - @brains/contracts@0.2.0-alpha.568
+  - @brains/site-composition@0.2.0-alpha.568
+  - @brains/utils@0.2.0-alpha.568
+  - @brains/plugins@0.2.0-alpha.568
+
+## 0.2.0-alpha.567
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/atproto-contracts@0.2.0-alpha.567
+  - @brains/contracts@0.2.0-alpha.567
+  - @brains/site-composition@0.2.0-alpha.567
+  - @brains/utils@0.2.0-alpha.567
+  - @brains/plugins@0.2.0-alpha.567
+
+## 0.2.0-alpha.566
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/atproto-contracts@0.2.0-alpha.566
+  - @brains/contracts@0.2.0-alpha.566
+  - @brains/site-composition@0.2.0-alpha.566
+  - @brains/utils@0.2.0-alpha.566
+  - @brains/plugins@0.2.0-alpha.566
+
+## 0.2.0-alpha.565
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/atproto-contracts@0.2.0-alpha.565
+  - @brains/contracts@0.2.0-alpha.565
+  - @brains/site-composition@0.2.0-alpha.565
+  - @brains/utils@0.2.0-alpha.565
+  - @brains/plugins@0.2.0-alpha.565
+
 ## 0.2.0-alpha.564
 
 ### Patch Changes

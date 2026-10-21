@@ -1,5 +1,117 @@
 # @rizom/brain
 
+## 0.2.0-alpha.575
+
+### Patch Changes
+
+- [#693](https://github.com/rizom-ai/brains/pull/693) [`7377890`](https://github.com/rizom-ai/brains/commit/7377890011efcad3216cbc6f5820e32cf8519240) Thanks [@yeehaa123](https://github.com/yeehaa123)! - Site builds of large brains use less memory and stay closer to linear time: each page is prepared as it is rendered, a few at a time, so a build no longer holds all of its pages; the input fingerprint hashes each page instead of the whole build, route generation and the image scan read entities a page at a time, a book's sections are read through the slug index, Tailwind reads the classes collected while pages render instead of scanning every page, and a theme page reads its neighbours' fields without loading their text. An unpaginated index, such as `/books`, now lists every entity rather than the first 100.
+
+## 0.2.0-alpha.574
+
+### Patch Changes
+
+- [#686](https://github.com/rizom-ai/brains/pull/686) [`9215754`](https://github.com/rizom-ai/brains/commit/921575475d110922ffa7440ff85ea776e6649f45) Thanks [@yeehaa123](https://github.com/yeehaa123)! - Studio links in documents and Chat render as styled links again; following an external link asks first in a proper dialog instead of dropping an unstyled prompt into the paragraph.
+
+  Studio names things the way people write them: "New note", "New FAQ", "New series", "Ask Content" and "Site Info" instead of "New Notes", "New faq", "New serie", "Ask Contents" and "Site Infos"; field and prompt labels keep acronyms ("OG Image", "Canonical URL", "AI", "LinkedIn"); choice lists show "Published" rather than "published"; and Studio copy uses American spelling ("Summarize body").
+
+  Studio names entries by their title instead of their id: skills by name and FAQs by question in lists and editor headings, Overview's recent activity ("Resilience Is Not Redundancy" · "Post updated"), and ⌘K search results. Administration names passkeys "Synced passkey" or "Device passkey" as Account does, and Site shows when the live copy was published and how many pages it has, keeping the build id with the render details.
+
+  Studio speaks plainly: a new entry asks for a "File name" and says where it saves; path errors, the delete confirmation and folder lists drop storage jargon; lists count "entries" once (no pager for a single page); Guest chat reads "Turn on guest chat", "$0.00" and "0 bytes of 4 MB"; Traffic says which days have no traffic collected; and dashboard cards link to "Open Site" and "Open Publishing" rather than "Open in Studio".
+
+  New entries open on Source, read "Not created yet" until they exist, offer a "Create" action and say why it is unavailable; a blank new entry is no longer "unsaved". ⌘K offers Studio's own pages (Overview, Chat, workspaces, Account, and every collection on search) and no longer spell-checks the query. Administration and Account agree on linked identities (a passkey is a sign-in credential), Account names only the sections it has, a new operator lands in Studio after registering their first passkey, and derived skills keep their names across reruns instead of being deleted and recreated.
+
+  Studio looks right in the details: the collapsed rail centers Commands, glyph buttons such as "•••" no longer wrap on phones, phone titles keep three lines before clamping, Chat's composer shows one focus ring, captioned figures (Guest chat, Traffic) line up in columns, a selected row reads as selected rather than as an error in the dark climate, and a failed site build shows its actual error instead of "Handler returned failure". A port set through `plugins.webserver.productionPort` now also sets the local site URL, so the first-passkey setup link printed at startup uses the right port.
+
+  The console strip's Studio door opens Studio itself rather than its `/cms` redirect alias, a singleton that does not exist yet is named by its title, and Overview names entries written by projections (derived skills and topics) by their titles too.
+
+  Only public turns and site visitors' questions become draft FAQs; an operator's own Studio Chat questions no longer land in the Inbox as FAQs.
+
+  Prompts whose title is still the old generated form are corrected at boot ("…AI Response", "…LinkedIn"); titles you edited are kept.
+
+  Obsidian vault bases take the same names as Studio's collections ("FAQs.base", "Site Content.base"); a base under its earlier name moves once, keeping any edits.
+
+## 0.2.0-alpha.573
+
+### Patch Changes
+
+- [#694](https://github.com/rizom-ai/brains/pull/694) [`8a74229`](https://github.com/rizom-ai/brains/commit/8a7422918abeaee4f8ed448e3b2607bf404a01c9) Thanks [@yeehaa123](https://github.com/yeehaa123)! - The Board has a New card button: a title, optional details and an assignee add a card to To do. A card added by hand records who added it and when, and shows "Board" where other cards show their channel or the Inbox.
+
+## 0.2.0-alpha.572
+
+### Patch Changes
+
+- [#692](https://github.com/rizom-ai/brains/pull/692) [`34154cf`](https://github.com/rizom-ai/brains/commit/34154cfc4f6126be21349515372c4c934c91f8ea) Thanks [@yeehaa123](https://github.com/yeehaa123)! - Search returns only entity types the brain loads. Rows left by a plugin the brain no longer runs used to take result slots and log an error on every search. An unknown entity type now reports itself as unknown rather than as a failed registration.
+
+## 0.2.0-alpha.571
+
+### Patch Changes
+
+- [#691](https://github.com/rizom-ai/brains/pull/691) [`b0ae327`](https://github.com/rizom-ai/brains/commit/b0ae32764292843a6c211c198a2a75f2aee917e8) Thanks [@yeehaa123](https://github.com/yeehaa123)! - A passkey setup link that cannot register says why: its delivery has not been confirmed, it was already used or expired, or its delivery address is no longer valid. It used to report every case as "Passkey registration user is unavailable".
+
+## 0.2.0-alpha.570
+
+### Patch Changes
+
+- [#687](https://github.com/rizom-ai/brains/pull/687) [`d343cb9`](https://github.com/rizom-ai/brains/commit/d343cb9e486841acd8741d48783a408fb618f089) Thanks [@yeehaa123](https://github.com/yeehaa123)! - A Slack member an Admin has attached to a person now speaks with that person's role, the same way an attached Discord user does. A revoked or suspended binding drops the speaker to public; unbound Slack members still follow `slack:*` permission rules.
+
+- [#689](https://github.com/rizom-ai/brains/pull/689) [`b445dc9`](https://github.com/rizom-ai/brains/commit/b445dc94e3a7e72c6977647aba2b573132c0add1) Thanks [@yeehaa123](https://github.com/yeehaa123)! - The `topic-distribution` report is now a distribution. Each topic carries `sources`: the visible source entities whose current extraction votes support it, merged topics folded in, so a source may count for several topics. Topics are sorted by that count. A new `coverage` counts the visible source entities that extraction reads, how many it has read in their current version (`attributed`), and how many are pending extraction (`unattributed`), so a partly extracted brain does not read as a settled one. With no topics, `unextracted` now counts only the sources extraction reads; when a caller sees source content but extraction reads none of it, the report returns `outsideExtraction` instead, pointing to `system_search` without saying topics are on their way. Content extraction never reads, such as entities outside its visibility or drafts it skips, is left out of `coverage`. Previously the report listed topic ids and titles only, and the agent could not say which topics were most common.
+
+## 0.2.0-alpha.569
+
+### Patch Changes
+
+- [#684](https://github.com/rizom-ai/brains/pull/684) [`3fc892c`](https://github.com/rizom-ai/brains/commit/3fc892c84d2f683113eed0e5abd16c3ddf6811a5) Thanks [@yeehaa123](https://github.com/yeehaa123)! - An entity type can retire frontmatter fields it no longer uses. Stored entities carrying a retired field still load, and the brain removes the field from them on start, including from synced files. Blog posts retire `ogDescription`, `twitterCard` and `atprotoUri`, which nothing read; publishing a post to ATProto no longer writes its record URI back into the post.
+
+  Agents retire `cardObservedAt`, `cardLastCheckedAt`, `a2aEndpoint`, `did` (the agent page shows `brainDid`) and `anchorDid`. The card refresh loop now keeps its failure counts, unavailability and stale deadlines outside the agent, starting from the values the agent already carries.
+
+  Newsletters retire `buttondownId` and `resendBroadcastId`; sending no longer writes the provider delivery id into the newsletter.
+
+  Docs retire `sourcePath`, and site content retires `routeId` and `sectionId`, which repeated the section's `route:section` id.
+
+  Decisions and action items retire `spaceId`, `sourceSummaryId`, `sourceMessageCount` and `projectionVersion`. An action item is now written in its trimmed shape on any save, so the rewrite on start migrates stored cards completely.
+
+  Conversation summaries retire `conversationId` (the summary's id is its conversation), `entryCount` (counted from the body) and `projectionVersion` (already part of the source hash).
+
+  Links retire `domain`; the link list, link page and ATProto record take the hostname from the URL.
+
+  Traffic snapshots retire `week`, `start` and `end`: a snapshot's days fix its ISO week and dates.
+
+  Mail items retire `source.senderKey` and `source.domain`, which nothing read. A type can now retire a field inside a frontmatter object, and a persist validator no longer sees retired fields.
+
+  Email reply drafts retire `updatedAt`; a draft reports its update time from the entity.
+
+  A type can list translated fields: stored keys its parser still reads to fill their new place, never written back. Action items use it for `timeRange`, which was kept in stored cards; the next start removes it.
+
+  Directory sync writes an imported file back in its stored form when the brain drops one of its fields, so a brain bootstrapped from an older content repository cleans its files too.
+
+## 0.2.0-alpha.568
+
+### Patch Changes
+
+- [#685](https://github.com/rizom-ai/brains/pull/685) [`45caedb`](https://github.com/rizom-ai/brains/commit/45caedbbd913f88f32461f38c023278c3db41307) Thanks [@yeehaa123](https://github.com/yeehaa123)! - When a synced file omits its visibility, the brain keeps the entity's stored non-public tier and now writes it back into the file, so the file no longer understates who can see the entity.
+
+## 0.2.0-alpha.567
+
+### Patch Changes
+
+- [#683](https://github.com/rizom-ai/brains/pull/683) [`03e9285`](https://github.com/rizom-ai/brains/commit/03e9285d867deefaf66ba35a75e716d3e5a1c3a6) Thanks [@yeehaa123](https://github.com/yeehaa123)! - Recheck the full public FAQ revision after semantic confirmation, settle auxiliary generation and embedding usage across hits, misses and failures, and count persisted answered-before replies through their existing durable capture identity without reclassification. Keep unreported work unknown and propagate guest cancellation to auxiliary providers.
+
+  Stop old web and worker writers before rollout. Older answered-before replies without capture provenance need manual count reconciliation; existing capture claims and receipts must not be expired, removed or replayed automatically. Mixed-version operation and downgrade are unsupported.
+
+## 0.2.0-alpha.566
+
+### Patch Changes
+
+- [#664](https://github.com/rizom-ai/brains/pull/664) [`fe97986`](https://github.com/rizom-ai/brains/commit/fe9798645d407b13c580222854ba5f7fb09dc450) Thanks [@yeehaa123](https://github.com/yeehaa123)! - Studio has a Board under Work: the team's action items in To do, Doing, Blocked and Done columns. Drag a card to another column, or use its Move menu; a card someone else already moved is reported rather than overridden. Open a card to read its text and notes, and add a note. Filter the board to a project, a value of the brain's `projects` grouping, and see the project's counts and blocked cards. Blocked cards appear in the Inbox with Resume, Done and Drop, and an Inbox item can be tracked on the board as a card. In chat, `action_item_update` moves a card or adds a note. Cards moved, grouped or edited stay put when a conversation is summarized again. Studio Overview lists blocked action items under Needs you and links to the board.
+
+  Action item frontmatter is trimmed to what a card uses: status, capture time, its conversation or Inbox source, and flat `assignedTo` and `requestedBy` entries (`{ name, id }`). Items stored in the earlier shape are read as before and rewritten in the trimmed shape on their next change.
+
+## 0.2.0-alpha.565
+
+### Patch Changes
+
+- [#679](https://github.com/rizom-ai/brains/pull/679) [`3f08d82`](https://github.com/rizom-ai/brains/commit/3f08d8286b54505da81814eabffd77f92b8ac55e) Thanks [@yeehaa123](https://github.com/yeehaa123)! - The style guide also wins over voice wording in a generation request. The precedence statement now covers the request's additional instructions as well as the template's, and the agent is told to write `system_generate` prompts from what the user asked for, without adding "engaging", "a compelling hook", "invite discussion" or other voice directions of its own.
+
 ## 0.2.0-alpha.564
 
 ### Patch Changes

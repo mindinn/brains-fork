@@ -284,6 +284,13 @@ export class ShellBootloader {
       });
       // Existing membership becomes queryable before grouping reads are admitted.
       await this.services.entityService.reprojectRegisteredGroupings();
+      // Stored entities lose frontmatter fields their type has retired.
+      const retired = await this.services.entityService.rewriteRetiredFields();
+      if (retired.rewritten > 0) {
+        this.services.logger.info("Rewrote entities carrying retired fields", {
+          rewritten: retired.rewritten,
+        });
+      }
 
       if (initialSyncPending) {
         pendingStartupContent = initialSync.promise
@@ -406,6 +413,11 @@ export class ShellBootloader {
     if (prompts.refreshed.length > 0) {
       logger.info("Refreshed untouched prompts to their current defaults", {
         targets: prompts.refreshed,
+      });
+    }
+    if (prompts.retitled.length > 0) {
+      logger.info("Corrected generated prompt titles", {
+        targets: prompts.retitled,
       });
     }
     if (prompts.staleOverrides.length > 0) {

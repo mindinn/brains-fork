@@ -1,5 +1,148 @@
 # @brains/book
 
+## 0.2.0-alpha.575
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.575
+  - @brains/media-page-composer@0.2.0-alpha.575
+  - @brains/site-atlas@0.2.0-alpha.575
+  - @brains/ui-library@0.2.0-alpha.575
+  - @brains/utils@0.2.0-alpha.575
+  - @brains/plugins@0.2.0-alpha.575
+  - @brains/templates@0.2.0-alpha.575
+
+## 0.2.0-alpha.574
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.574
+  - @brains/media-page-composer@0.2.0-alpha.574
+  - @brains/site-atlas@0.2.0-alpha.574
+  - @brains/ui-library@0.2.0-alpha.574
+  - @brains/utils@0.2.0-alpha.574
+  - @brains/plugins@0.2.0-alpha.574
+  - @brains/templates@0.2.0-alpha.574
+
+## 0.2.0-alpha.573
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.573
+  - @brains/media-page-composer@0.2.0-alpha.573
+  - @brains/site-atlas@0.2.0-alpha.573
+  - @brains/ui-library@0.2.0-alpha.573
+  - @brains/utils@0.2.0-alpha.573
+  - @brains/plugins@0.2.0-alpha.573
+  - @brains/templates@0.2.0-alpha.573
+
+## 0.2.0-alpha.572
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.572
+  - @brains/media-page-composer@0.2.0-alpha.572
+  - @brains/site-atlas@0.2.0-alpha.572
+  - @brains/ui-library@0.2.0-alpha.572
+  - @brains/utils@0.2.0-alpha.572
+  - @brains/plugins@0.2.0-alpha.572
+  - @brains/templates@0.2.0-alpha.572
+
+## 0.2.0-alpha.571
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.571
+  - @brains/media-page-composer@0.2.0-alpha.571
+  - @brains/site-atlas@0.2.0-alpha.571
+  - @brains/ui-library@0.2.0-alpha.571
+  - @brains/utils@0.2.0-alpha.571
+  - @brains/plugins@0.2.0-alpha.571
+  - @brains/templates@0.2.0-alpha.571
+
+## 0.2.0-alpha.570
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.570
+  - @brains/media-page-composer@0.2.0-alpha.570
+  - @brains/site-atlas@0.2.0-alpha.570
+  - @brains/ui-library@0.2.0-alpha.570
+  - @brains/utils@0.2.0-alpha.570
+  - @brains/plugins@0.2.0-alpha.570
+  - @brains/templates@0.2.0-alpha.570
+
+## 0.2.0-alpha.569
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.569
+  - @brains/media-page-composer@0.2.0-alpha.569
+  - @brains/site-atlas@0.2.0-alpha.569
+  - @brains/ui-library@0.2.0-alpha.569
+  - @brains/utils@0.2.0-alpha.569
+  - @brains/plugins@0.2.0-alpha.569
+  - @brains/templates@0.2.0-alpha.569
+
+## 0.2.0-alpha.568
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.568
+  - @brains/media-page-composer@0.2.0-alpha.568
+  - @brains/site-atlas@0.2.0-alpha.568
+  - @brains/ui-library@0.2.0-alpha.568
+  - @brains/utils@0.2.0-alpha.568
+  - @brains/plugins@0.2.0-alpha.568
+  - @brains/templates@0.2.0-alpha.568
+
+## 0.2.0-alpha.567
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.567
+  - @brains/media-page-composer@0.2.0-alpha.567
+  - @brains/site-atlas@0.2.0-alpha.567
+  - @brains/ui-library@0.2.0-alpha.567
+  - @brains/utils@0.2.0-alpha.567
+  - @brains/plugins@0.2.0-alpha.567
+  - @brains/templates@0.2.0-alpha.567
+
+## 0.2.0-alpha.566
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.566
+  - @brains/media-page-composer@0.2.0-alpha.566
+  - @brains/site-atlas@0.2.0-alpha.566
+  - @brains/ui-library@0.2.0-alpha.566
+  - @brains/utils@0.2.0-alpha.566
+  - @brains/plugins@0.2.0-alpha.566
+  - @brains/templates@0.2.0-alpha.566
+
+## 0.2.0-alpha.565
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @brains/contracts@0.2.0-alpha.565
+  - @brains/media-page-composer@0.2.0-alpha.565
+  - @brains/site-atlas@0.2.0-alpha.565
+  - @brains/ui-library@0.2.0-alpha.565
+  - @brains/utils@0.2.0-alpha.565
+  - @brains/plugins@0.2.0-alpha.565
+  - @brains/templates@0.2.0-alpha.565
+
 ## 0.2.0-alpha.564
 
 ### Patch Changes

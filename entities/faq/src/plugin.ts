@@ -27,7 +27,7 @@ import {
   type FaqReconcileJobData,
 } from "./handlers/faq-reconcile-handler";
 import { FaqDataSource } from "./datasources/faq-datasource";
-import { SAME_QUESTION_DISTANCE, type FaqStoreDeps } from "./lib/faq-store";
+import { SAME_QUESTION_DISTANCE } from "./lib/faq-store";
 import { answerAskedBefore } from "./lib/asked-before";
 import { capturedReplyStore } from "./lib/captured-replies";
 import { registerFaqEvalHandlers } from "./lib/eval-handlers";
@@ -148,7 +148,7 @@ export class FaqPlugin extends EntityPlugin<
     // A visitor's question a published FAQ already answers is answered from
     // it before the model is asked; the web process answers the shell here.
     if (!context.executionOnly) {
-      const askedBeforeDeps: FaqStoreDeps = {
+      const askedBeforeDeps = {
         entityService: context.entityService,
         searchWithDistances: context.entityService.searchWithDistances.bind(
           context.entityService,
@@ -190,13 +190,16 @@ export class FaqPlugin extends EntityPlugin<
       },
     );
 
-    // Replies without a recorded permission level have no known visibility
-    // and are never captured.
+    // Only public turns are captured: an operator asking about their own
+    // brain is not a question a FAQ answers. Replies without a recorded
+    // permission level have no known visibility and are never captured.
     context.messaging.subscribe(
       CONVERSATION_MESSAGE_ADDED_CHANNEL,
       async (message) => {
         const reply = assistantReplySchema.safeParse(message.payload);
         if (!reply.success) return { success: true };
+        if (reply.data.metadata.userPermissionLevel !== "public")
+          return { success: true };
 
         // The reply is the newest message now, so the count is its position.
         const position = await context.conversations.countMessages(

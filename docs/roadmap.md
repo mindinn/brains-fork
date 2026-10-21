@@ -80,7 +80,6 @@ Plans:
 
 - [web-search-tool.md](./plans/web-search-tool.md) — provider-neutral, permission-gated, audited web search.
 - [books.md](./plans/books.md) — a `book` plugin whose id paths carry book structure, an importer, and three read-only book brains (Friedrich, Karl, Sigmund) holding the authors' German works from openly licensed sources.
-- [system-analytics-tool.md](./plans/system-analytics-tool.md) — one extensible typed analytics/reporting surface.
 - [agent-tool-surface-consolidation.md](./plans/agent-tool-surface-consolidation.md) — keep agent, protocol, and CLI exposure distinct and finish the measured tool-surface/eval closeout.
 - [generation-voice-and-prompt-freshness.md](./plans/generation-voice-and-prompt-freshness.md) — make the style guide govern voice and form over templates, send each template once, and keep materialized prompt copies fresh, correctly keyed, and editable without restart.
 
@@ -92,7 +91,6 @@ The substrate exists: scoped conversation memory, first-pass attribution, config
 
 Plans:
 
-- [action-item-board.md](./plans/action-item-board.md) — a Studio board over the shared action items: four status columns, attributed moves and notes that survive re-projection, blocked cards in the Inbox, Inbox items tracked as cards, and project filters through a Studio grouping.
 - [team-posture-capabilities.md](./plans/team-posture-capabilities.md) — parked, demand-gated team-native capabilities such as meeting notes, decision records, team Q&A, and digest.
 
 ### 3. Trust and identity
@@ -102,7 +100,6 @@ The runtime identity boundary is shipped: private auth storage, distinct people,
 Plans:
 
 - [identity-and-trust.md](./plans/identity-and-trust.md) — the shared subject, channel, provenance, and trust model.
-- [connected-channels.md](./plans/connected-channels.md) — make Slack's attached identities govern its messages, proving extensibility end to end.
 - [operator-runtime-db.md](./plans/operator-runtime-db.md) — the broader private durable operator/security tier beyond shipped auth state.
 - [onboarding-ai-tools.md](./plans/onboarding-ai-tools.md) — an Account → AI tools tab with the MCP address and per-client steps, and shorter onboarding emails that greet the person, say what the brain is for, and link there.
 
@@ -116,6 +113,7 @@ Plans:
 - [artifacts-content-repos.md](./plans/artifacts-content-repos.md) — move pilot content repositories from GitHub to Cloudflare Artifacts, with a repo-scoped token per brain and Studio clone access for each user.
 - [discord-opt-in-plan.md](./plans/discord-opt-in-plan.md) — make Discord an explicit pilot choice rather than a default.
 - [operational-alert-delivery.md](./plans/operational-alert-delivery.md) — deliver sustained operational degradation to a human over a path that survives a dead worker.
+- [git-sync-credentials.md](./plans/git-sync-credentials.md) — revalidate optional remote configuration and replace fleet-wide static Git credentials with short-lived, repository-scoped GitHub App tokens.
 
 ### 5. Interfaces
 
@@ -158,6 +156,7 @@ Active cleanup and infrastructure plans:
 - [http-route-registry-hardening.md](./plans/http-route-registry-hardening.md) — continue security, matching, advertising, and cleanup beyond the shipped normalized registry.
 - [directory-sync-export-stall.md](./plans/directory-sync-export-stall.md) — retain fresh incident attribution/recovery work after the shipped semantic Git broker and health checks.
 - [turso-salvage.md](./plans/turso-salvage.md) — carry the engine-independent parts of the frozen Turso branch onto libSQL; `0.3` stays on libSQL.
+- [frontmatter-hygiene.md](./plans/frontmatter-hygiene.md) — keep entity frontmatter to what a person authors or reads: a retired-fields mechanism with a rewrite on start, then verified trims of conversation memory, agents, publishing and small types.
 - [local-model-runtime.md](./plans/local-model-runtime.md) — per-brain model selection for embeddings, text and images, with a local runtime sidecar; EmbeddingGemma 2 embeddings first.
 
 Research probes (parked):
